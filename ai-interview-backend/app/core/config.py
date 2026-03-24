@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Client registration mode
+    AUTH_REQUIRE_EMAIL_VERIFICATION: bool = False
+
     # S3
     AWS_ACCESS_KEY_ID: str = "your-access-key"
     AWS_SECRET_ACCESS_KEY: str = "your-secret-key"

@@ -15,6 +15,26 @@ import re
 
 class ClientAuthService(AuthBase):
     @staticmethod
+    def _hash_user_password(password: str) -> str:
+        try:
+            return User.get_password_hash(password)
+        except Exception as exc:
+            raise APIException(
+                status_code=500,
+                message=f"密码哈希组件异常，请检查后端 bcrypt 依赖是否已安装: {exc}"
+            )
+
+    @staticmethod
+    def _hash_refresh_token(refresh_token: str) -> str:
+        try:
+            return AuthBase.hash_token(refresh_token)
+        except Exception as exc:
+            raise APIException(
+                status_code=500,
+                message=f"令牌哈希组件异常，请检查后端 bcrypt 依赖是否已安装: {exc}"
+            )
+
+    @staticmethod
     def validate_password(password: str) -> bool:
         """验证密码强度"""
         if len(password) < 8:
@@ -38,9 +58,69 @@ class ClientAuthService(AuthBase):
         result = await db.execute(user_query)
         user = result.scalar_one_or_none()
 
-        if not user or not user.verify_password(password):
+        if not user:
+            return None
+
+        try:
+            is_valid = user.verify_password(password)
+        except Exception as exc:
+            raise APIException(
+                status_code=500,
+                message=f"密码校验组件异常，请检查后端 bcrypt 依赖是否已安装: {exc}"
+            )
+
+        if not is_valid:
             return None
         return user
+
+    @staticmethod
+    def _build_auth_response(user: User, access_token: str, refresh_token: str) -> Dict:
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "is_verified": user.is_verified,
+                "university": user.university,
+                "career_goal": user.career_goal,
+                "location": user.location
+            }
+        }
+
+    @staticmethod
+    async def _issue_client_tokens(
+        db: AsyncSession,
+        user: User,
+        *,
+        remember_me: bool = False
+    ) -> Dict:
+        access_token = AuthBase.create_access_token(
+            str(user.id),
+            scope="client",
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+
+        refresh_expires = timedelta(days=30 if remember_me else settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        refresh_token = AuthBase.create_refresh_token(
+            str(user.id),
+            expires_delta=refresh_expires
+        )
+
+        hashed_token = ClientAuthService._hash_refresh_token(refresh_token)
+        token = Token(
+            user_id=user.id,
+            token=hashed_token,
+            expires_at=datetime.now(UTC) + refresh_expires,
+            is_active=True
+        )
+        db.add(token)
+
+        user.last_active_at = datetime.now(UTC)
+        return ClientAuthService._build_auth_response(user, access_token, refresh_token)
 
     @staticmethod
     async def register_user(db: AsyncSession, user_data: Dict) -> Dict:
@@ -56,10 +136,12 @@ class ClientAuthService(AuthBase):
             # 验证密码强度
             ClientAuthService.validate_password(user_data["password"])
 
-            # 创建用户（未验证状态）
+            verification_required = bool(settings.AUTH_REQUIRE_EMAIL_VERIFICATION)
+
+            # 创建用户。默认首发走“直接注册即登录”模式；如显式启用邮箱验证，再进入待验证状态。
             user = User(
                 email=user_data["email"],
-                hashed_password=User.get_password_hash(user_data["password"]),
+                hashed_password=ClientAuthService._hash_user_password(user_data["password"]),
                 first_name=user_data.get("first_name"),
                 last_name=user_data.get("last_name"),
                 phone=user_data.get("phone"),
@@ -69,32 +151,40 @@ class ClientAuthService(AuthBase):
                 contract_types=user_data.get("contract_types"),
                 location=user_data.get("location"),
                 is_active=True,
-                is_verified=False
+                is_verified=not verification_required,
+                email_verified_at=datetime.now(UTC) if not verification_required else None
             )
 
             db.add(user)
             await db.flush()
 
-            # 发送验证码
-            await redis_verification_service.check_send_rate_limit(user_data["email"])
-            code = await redis_verification_service.generate_and_store_code(
-                user_data["email"], "registration", user.id
-            )
+            if verification_required:
+                await redis_verification_service.check_send_rate_limit(user_data["email"])
+                code = await redis_verification_service.generate_and_store_code(
+                    user_data["email"], "registration", user.id
+                )
 
-            # 异步发送邮件
-            send_verification_email_task.delay(
-                user_data["email"],
-                code,
-                "registration",
-                user_data.get("first_name")
-            )
+                try:
+                    send_verification_email_task.delay(
+                        user_data["email"],
+                        code,
+                        "registration",
+                        user_data.get("first_name")
+                    )
+                except Exception as exc:
+                    raise APIException(
+                        status_code=500,
+                        message=f"验证码邮件任务投递失败，请检查 Redis / Celery / SMTP 配置: {exc}"
+                    )
 
-            return {
-                "user_id": user.id,
-                "email": user.email,
-                "message": "注册成功，请验证邮箱",
-                "verification_required": True
-            }
+                return {
+                    "user_id": user.id,
+                    "email": user.email,
+                    "message": "注册成功，请验证邮箱验证码后再登录",
+                    "verification_required": True
+                }
+
+            return await ClientAuthService._issue_client_tokens(db, user)
 
     @staticmethod
     async def send_verification_code(db: AsyncSession, email: str, code_type: str) -> Dict:
@@ -118,13 +208,18 @@ class ClientAuthService(AuthBase):
             email, code_type, user.id if user else None
         )
 
-        # 异步发送邮件
-        send_verification_email_task.delay(
-            email,
-            code,
-            code_type,
-            user.first_name if user else None
-        )
+        try:
+            send_verification_email_task.delay(
+                email,
+                code,
+                code_type,
+                user.first_name if user else None
+            )
+        except Exception as exc:
+            raise APIException(
+                status_code=500,
+                message=f"验证码邮件任务投递失败，请检查 Redis / Celery / SMTP 配置: {exc}"
+            )
 
         return {
             "message": "验证码已发送至您的邮箱",
@@ -167,7 +262,7 @@ class ClientAuthService(AuthBase):
             refresh_token = AuthBase.create_refresh_token(str(user.id))
 
             # 存储 refresh token
-            hashed_token = AuthBase.hash_token(refresh_token)
+            hashed_token = ClientAuthService._hash_refresh_token(refresh_token)
             token = Token(
                 user_id=user.id,
                 token=hashed_token,
@@ -203,6 +298,9 @@ class ClientAuthService(AuthBase):
             if not user.is_active:
                 raise APIException(status_code=400, message="账号已被禁用")
 
+            if settings.AUTH_REQUIRE_EMAIL_VERIFICATION and not user.is_verified:
+                raise APIException(status_code=400, message="请先完成邮箱验证码验证")
+
             # 清除该用户的所有旧令牌
             await db.execute(
                 update(Token).where(
@@ -211,48 +309,11 @@ class ClientAuthService(AuthBase):
                 ).values(is_active=False)
             )
 
-            # 生成新的 access token 和 refresh token
-            access_token = AuthBase.create_access_token(
-                str(user.id),
-                scope="client",
-                expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            return await ClientAuthService._issue_client_tokens(
+                db,
+                user,
+                remember_me=remember_me
             )
-
-            # 根据 remember_me 设置 refresh token 过期时间
-            refresh_expires = timedelta(days=30 if remember_me else 7)
-            refresh_token = AuthBase.create_refresh_token(
-                str(user.id),
-                expires_delta=refresh_expires
-            )
-
-            # 存储新的refresh token
-            hashed_token = AuthBase.hash_token(refresh_token)
-            token = Token(
-                user_id=user.id,
-                token=hashed_token,
-                expires_at=datetime.now(UTC) + refresh_expires,
-                is_active=True
-            )
-            db.add(token)
-
-            # 更新最后活跃时间
-            user.last_active_at = datetime.now(UTC)
-
-            return {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "token_type": "bearer",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "is_verified": user.is_verified,
-                    "university": user.university,
-                    "career_goal": user.career_goal,
-                    "location": user.location
-                }
-            }
 
     @staticmethod
     async def refresh_token(db: AsyncSession, refresh_token: str) -> Dict:

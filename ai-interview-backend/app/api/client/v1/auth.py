@@ -24,7 +24,7 @@ async def register(
     user_data: UserRegister,
     db: AsyncSession = Depends(get_db)
 ):
-    """用户注册（直接注册并登录）"""
+    """用户注册（按配置选择直注册或邮箱验证码注册）"""
     result = await client_auth_service.register_user(
         db, user_data.model_dump()
     )
