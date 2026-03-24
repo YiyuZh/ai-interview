@@ -1,11 +1,12 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # 环境配置
-    ENV: str = "development"  # 默认值为 "development"
+    # Environment
+    ENV: str = "development"
 
-    # 基础配置
+    # Base application settings
     PROJECT_NAME: str = "FastAPI Template"
     API_V1_STR: str = "/api/v1"
     API_PORT: int = 8001
@@ -13,34 +14,34 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: str = ""
     UVICORN_WORKERS: int = 4
 
-    # Docker 端口配置（可选，用于 docker-compose）
+    # Optional docker/dev ports
     REDIS_EXTERNAL_PORT: int = 6386
     NGINX_HTTP_PORT: int = 8086
     NGINX_HTTPS_PORT: int = 8446
     FLOWER_PORT: int = 5556
 
-    # 数据库配置
+    # Database
     POSTGRES_USER: str = "demo"
     POSTGRES_PASSWORD: str = "demo123"
     POSTGRES_HOST: str = "192.168.110.90"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "demo"
 
-    # Redis 配置
+    # Redis
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
 
-    # Celery 配置
-    CELERY_BROKER_URL: str = ""  # 在 __init__ 中设置
-    CELERY_RESULT_BACKEND: str = ""  # 在 __init__ 中设置
+    # Celery
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
 
-    # HTTP 代理配置 - 仅在测试环境使用
-    USE_HTTP_PROXY: bool = False  # 默认不使用代理
+    # HTTP proxy, used only when explicitly enabled
+    USE_HTTP_PROXY: bool = False
     HTTP_PROXY: str = "http://127.0.0.1:7890"
     HTTPS_PROXY: str = "http://127.0.0.1:7890"
 
-    # 邮件配置
+    # Mail
     MAIL_MAILER: str = "smtp"
     MAIL_HOST: str = "localhost"
     MAIL_PORT: int = 1025
@@ -50,46 +51,53 @@ class Settings(BaseSettings):
     MAIL_FROM_NAME: str = "Seiki"
     MAIL_ENCRYPTION: str = "none"
 
-    # Brevo 配置
+    # Brevo
     BREVO_API_KEY: str = "dummy-api-key"
     BREVO_EMAIL_FROM: str = "noreply@example.com"
     BREVO_EMAIL_FROM_NAME: str = "Seiki"
 
-    # 管理员邮箱
+    # Admin contact
     ADMIN_EMAIL: str = "dev@zetos.fr"
 
-    # JWT 配置
+    # JWT
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # S3 配置
+    # S3
     AWS_ACCESS_KEY_ID: str = "your-access-key"
     AWS_SECRET_ACCESS_KEY: str = "your-secret-key"
     AWS_REGION: str = "us-east-1"
     AWS_BUCKET_NAME: str = "your-bucket-name"
     AWS_ENDPOINT: str = "https://s3.amazonaws.com"
 
-    # OpenAI 配置
+    # OpenAI
     OPENAI_API_KEY: str = "your-openai-api-key"
 
-    # DeepSeek 配置
+    # DeepSeek
     DEEPSEEK_API_KEY: str = "your-deepseek-api-key"
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
 
+    @field_validator("MAIL_PORT", mode="before")
+    @classmethod
+    def normalize_mail_port(cls, value):
+        # If MAIL_PORT is set to an empty string in .env, fall back to a safe integer.
+        if value is None:
+            return 1025
+        if isinstance(value, str) and not value.strip():
+            return 1025
+        return value
+
     class Config:
         env_file = ".env"
-        env_file_encoding = "utf-8"  # 可选，指定编码
+        env_file_encoding = "utf-8"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # 在所有属性从 env 加载后设置 Celery URL
         if self.REDIS_PASSWORD:
-            redis_url = (
-                f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/0"
-            )
+            redis_url = f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/0"
         else:
             redis_url = f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/0"
         self.CELERY_BROKER_URL = redis_url
