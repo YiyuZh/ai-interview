@@ -10,6 +10,9 @@
         <router-link to="/users" active-class="active">
           <span class="nav-icon">👥</span> 用户管理
         </router-link>
+        <router-link to="/knowledge-bases" active-class="active">
+          <span class="nav-icon">🧠</span> 公共知识库
+        </router-link>
         <router-link to="/interviews" active-class="active">
           <span class="nav-icon">🎤</span> 面试记录
         </router-link>

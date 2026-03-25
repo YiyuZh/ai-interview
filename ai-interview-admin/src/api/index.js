@@ -16,3 +16,10 @@ export const interviewApi = {
   detail: (id) => api.get(`/interviews/${id}`),
   delete: (id) => api.delete(`/interviews/${id}`)
 }
+
+export const knowledgeBaseApi = {
+  list: () => api.get('/knowledge-bases'),
+  create: (data) => api.post('/knowledge-bases', data),
+  update: (id, data) => api.put(`/knowledge-bases/${id}`, data),
+  delete: (id) => api.delete(`/knowledge-bases/${id}`)
+}

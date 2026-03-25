@@ -48,6 +48,11 @@ CLIENT_ROUTES = [
         tags=["client-resume"]
     ),
     RouteConfig(
+        module_path="app.api.client.v1.position_knowledge_base",
+        prefix=f"{settings.API_V1_STR}/knowledge-bases",
+        tags=["client-knowledge-base"]
+    ),
+    RouteConfig(
         module_path="app.api.client.v1.interview",
         prefix=f"{settings.API_V1_STR}/interviews",
         tags=["client-interview"]
@@ -85,6 +90,11 @@ BACKOFFICE_ROUTES = [
         module_path="app.api.backoffice.v1.interviews",
         prefix=f"{settings.API_V1_STR}/backoffice/interviews",
         tags=["backoffice-interviews"]
+    ),
+    RouteConfig(
+        module_path="app.api.backoffice.v1.position_knowledge_base",
+        prefix=f"{settings.API_V1_STR}/backoffice/knowledge-bases",
+        tags=["backoffice-knowledge-base"]
     ),
 ]
 

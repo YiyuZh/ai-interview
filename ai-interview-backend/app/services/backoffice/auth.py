@@ -8,6 +8,7 @@ from app.core.security import AuthBase
 from app.core.config import settings
 from app.db.session import transaction
 from app.exceptions.http_exceptions import APIException
+import asyncio
 
 
 class BackofficeAuthService(AuthBase):
@@ -18,7 +19,15 @@ class BackofficeAuthService(AuthBase):
         result = await db.execute(admin_query)
         admin = result.scalar_one_or_none()
 
-        if not admin or not admin.verify_password(password):
+        if not admin:
+            return None
+
+        try:
+            is_valid = await asyncio.to_thread(admin.verify_password, password)
+        except Exception as exc:
+            raise APIException(status_code=500, message=f"管理员密码校验组件异常: {exc}")
+
+        if not is_valid:
             return None
         return admin
 
@@ -48,7 +57,7 @@ class BackofficeAuthService(AuthBase):
             refresh_token = AuthBase.create_refresh_token(str(admin.id))
 
             # 存储新的refresh token
-            hashed_token = AuthBase.hash_token(refresh_token)
+            hashed_token = AuthBase.hash_refresh_token(refresh_token)
             token = AdminToken(
                 admin_id=admin.id,
                 token=hashed_token,
@@ -79,7 +88,7 @@ class BackofficeAuthService(AuthBase):
         result = await db.execute(token_query)
         token = result.scalar_one_or_none()
 
-        if not token or not AuthBase.verify_token_hash(refresh_token, token.token):
+        if not token or not AuthBase.verify_refresh_token_hash(refresh_token, token.token):
             raise APIException(status_code=401, message="Invalid or expired refresh token")
 
         token.last_used_at = datetime.now(UTC)

@@ -10,14 +10,15 @@ from app.db.session import transaction
 from app.exceptions.http_exceptions import APIException
 from app.services.client.redis_verification import redis_verification_service
 from app.schedule.jobs.email_tasks import send_verification_email_task
+import asyncio
 import re
 
 
 class ClientAuthService(AuthBase):
     @staticmethod
-    def _hash_user_password(password: str) -> str:
+    async def _hash_user_password(password: str) -> str:
         try:
-            return User.get_password_hash(password)
+            return await asyncio.to_thread(User.get_password_hash, password)
         except Exception as exc:
             raise APIException(
                 status_code=500,
@@ -27,7 +28,7 @@ class ClientAuthService(AuthBase):
     @staticmethod
     def _hash_refresh_token(refresh_token: str) -> str:
         try:
-            return AuthBase.hash_token(refresh_token)
+            return AuthBase.hash_refresh_token(refresh_token)
         except Exception as exc:
             raise APIException(
                 status_code=500,
@@ -62,7 +63,7 @@ class ClientAuthService(AuthBase):
             return None
 
         try:
-            is_valid = user.verify_password(password)
+            is_valid = await asyncio.to_thread(user.verify_password, password)
         except Exception as exc:
             raise APIException(
                 status_code=500,
@@ -141,7 +142,7 @@ class ClientAuthService(AuthBase):
             # 创建用户。默认首发走“直接注册即登录”模式；如显式启用邮箱验证，再进入待验证状态。
             user = User(
                 email=user_data["email"],
-                hashed_password=ClientAuthService._hash_user_password(user_data["password"]),
+                hashed_password=await ClientAuthService._hash_user_password(user_data["password"]),
                 first_name=user_data.get("first_name"),
                 last_name=user_data.get("last_name"),
                 phone=user_data.get("phone"),
@@ -330,7 +331,7 @@ class ClientAuthService(AuthBase):
         result = await db.execute(token_query)
         token = result.scalar_one_or_none()
 
-        if not token or not AuthBase.verify_token_hash(refresh_token, token.token):
+        if not token or not AuthBase.verify_refresh_token_hash(refresh_token, token.token):
             raise APIException(status_code=401, message="无效或已过期的刷新令牌")
 
         # 检查用户状态
@@ -371,7 +372,7 @@ class ClientAuthService(AuthBase):
         result = await db.execute(token_query)
         token = result.scalar_one_or_none()
 
-        if token and AuthBase.verify_token_hash(refresh_token, token.token):
+        if token and AuthBase.verify_refresh_token_hash(refresh_token, token.token):
             token.is_active = False
             await db.commit()
 
@@ -417,7 +418,7 @@ class ClientAuthService(AuthBase):
                 raise APIException(status_code=404, message="用户不存在")
 
             # 更新密码
-            user.hashed_password = User.get_password_hash(new_password)
+            user.hashed_password = await asyncio.to_thread(User.get_password_hash, new_password)
 
             # 清除所有现有令牌（强制重新登录）
             await db.execute(

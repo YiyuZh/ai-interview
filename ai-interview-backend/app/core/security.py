@@ -3,9 +3,12 @@ from typing import Optional, Dict
 from jose import jwt, JWTError
 from app.core.config import settings
 import uuid
+import hashlib
+import hmac
 from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+TOKEN_HASH_PREFIX = "sha256$"
 
 
 class AuthBase:
@@ -69,3 +72,29 @@ class AuthBase:
     def verify_token_hash(plain_token: str, hashed_token: str) -> bool:
         """验证令牌哈希"""
         return pwd_context.verify(plain_token, hashed_token)
+
+    @staticmethod
+    def hash_refresh_token(token: str) -> str:
+        """
+        对 refresh token 做快速哈希。
+        refresh token 本身已是高熵随机 JWT，这里使用基于 SECRET_KEY 的 HMAC-SHA256，
+        比 bcrypt 更适合在线认证场景。
+        """
+        digest = hmac.new(
+            settings.SECRET_KEY.encode("utf-8"),
+            token.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()
+        return f"{TOKEN_HASH_PREFIX}{digest}"
+
+    @staticmethod
+    def verify_refresh_token_hash(plain_token: str, stored_hash: str) -> bool:
+        """
+        兼容两种 refresh token 存储格式：
+        1. 新格式：sha256$<digest>
+        2. 老格式：bcrypt 哈希
+        """
+        if stored_hash.startswith(TOKEN_HASH_PREFIX):
+            expected = AuthBase.hash_refresh_token(plain_token)
+            return hmac.compare_digest(expected, stored_hash)
+        return pwd_context.verify(plain_token, stored_hash)

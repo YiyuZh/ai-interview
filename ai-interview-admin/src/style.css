@@ -7,8 +7,9 @@ button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 16px; f
 .btn-danger { background: #ef4444; color: white; }
 .btn-danger:hover { background: #dc2626; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
-input, select { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; }
+input, select, textarea { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; outline: none; }
 input:focus { border-color: #4f46e5; }
+textarea:focus { border-color: #4f46e5; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th { background: #f9fafb; text-align: left; padding: 10px 14px; font-weight: 600; color: #6b7280; border-bottom: 1px solid #e5e7eb; }
 td { padding: 10px 14px; border-bottom: 1px solid #f3f4f6; }

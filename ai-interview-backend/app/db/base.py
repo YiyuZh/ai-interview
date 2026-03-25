@@ -18,7 +18,7 @@ def get_engine():
     if engine is None:
         engine = create_async_engine(
             SQLALCHEMY_DATABASE_URL,
-            echo=True,
+            echo=settings.ENV != "production",
             future=True,
             pool_pre_ping=True,
             # 增强连接池配置以提高稳定性
@@ -42,7 +42,7 @@ def create_scheduler_engine():
     """为调度任务创建独立的数据库引擎，确保不会与主应用程序共享事件循环"""
     return create_async_engine(
         SQLALCHEMY_DATABASE_URL,
-        echo=True,
+        echo=settings.ENV != "production",
         future=True,
         pool_pre_ping=True,
         pool_recycle=1800,

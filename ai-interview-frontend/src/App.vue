@@ -5,6 +5,7 @@
         <router-link to="/dashboard" class="nav-logo">🎯 智面</router-link>
         <div class="nav-links">
           <router-link to="/dashboard">面试记录</router-link>
+          <router-link to="/knowledge-base">岗位知识库</router-link>
           <router-link to="/resume/upload">上传简历</router-link>
           <router-link to="/profile" class="nav-user-link">
             <img v-if="authStore.userAvatar && !avatarError" :src="authStore.userAvatar" class="nav-avatar" alt="avatar" @error="avatarError = true" />

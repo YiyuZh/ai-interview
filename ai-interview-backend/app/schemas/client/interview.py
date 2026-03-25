@@ -1,13 +1,17 @@
-from typing import Optional, List, Dict, Any, Literal
+from typing import Any, Dict, Literal, Optional
+
 from pydantic import Field
+
 from ..base import BaseSchema
 
 
 class InterviewStart(BaseSchema):
     resume_id: int
     target_position: str = "Python后端开发工程师"
+    knowledge_base_id: Optional[int] = None
     difficulty: Literal["easy", "medium", "hard"] = "medium"
     total_questions: int = Field(default=5, ge=3, le=10)
+    multi_interviewer_enabled: bool = False
 
 
 class InterviewStartResponse(BaseSchema):
@@ -15,6 +19,8 @@ class InterviewStartResponse(BaseSchema):
     first_question: str
     question_index: int
     total_questions: int
+    knowledge_base_title: Optional[str] = None
+    interview_mode: str = "single"
 
 
 class AnswerSubmit(BaseSchema):
@@ -46,6 +52,7 @@ class InterviewListItem(BaseSchema):
     interview_id: int
     target_position: str
     difficulty: str
+    interview_mode: str = "single"
     overall_score: Optional[float] = None
     total_questions: int
     status: str

@@ -88,6 +88,59 @@
           </div>
         </div>
 
+        <div class="card knowledge-card" style="margin-bottom:20px">
+          <div class="knowledge-header">
+            <div>
+              <h3 style="margin-bottom:8px">🧠 岗位知识库增强</h3>
+              <p class="knowledge-desc">
+                可选：选择你为目标岗位整理的知识库，让 AI 面试官更贴近你真正想训练的考点和追问方向。
+              </p>
+            </div>
+            <router-link to="/knowledge-base" class="btn-secondary" style="display:inline-block;padding:8px 14px;border-radius:8px">
+              管理知识库
+            </router-link>
+          </div>
+
+          <div v-if="knowledgeLoading" class="knowledge-loading">正在加载知识库...</div>
+
+          <template v-else>
+            <div class="form-group">
+              <label>选择要注入的岗位知识库</label>
+              <select v-model="selectedKnowledgeBaseId">
+                <option value="">不使用知识库（默认按简历与岗位出题）</option>
+                <option
+                  v-for="item in knowledgeBaseOptions"
+                  :key="item.knowledge_base_id"
+                  :value="String(item.knowledge_base_id)"
+                >
+                  {{ item.title }} ｜ {{ item.target_position }} ｜ {{ item.source_label }}{{ matchScore(item) > 0 ? ' · 推荐' : '' }}
+                </option>
+              </select>
+            </div>
+
+            <p v-if="knowledgeBaseOptions.length === 0" class="knowledge-empty">
+              你还没有创建岗位知识库。建议先整理一份目标岗位的核心知识点，训练效果会更稳定。
+            </p>
+
+            <div v-else-if="selectedKnowledgeBase" class="knowledge-preview">
+              <div class="knowledge-tags">
+                <span class="knowledge-tag">{{ selectedKnowledgeBase.title }}</span>
+                <span class="knowledge-tag subtle">{{ selectedKnowledgeBase.target_position }}</span>
+                <span :class="['knowledge-tag', selectedKnowledgeBase.scope === 'public' ? 'public-tag' : 'private-tag']">
+                  {{ selectedKnowledgeBase.source_label }}
+                </span>
+              </div>
+              <p class="knowledge-preview-text">{{ selectedKnowledgeBase.preview }}</p>
+              <p v-if="selectedKnowledgeBase.focus_points" class="knowledge-detail">
+                <strong>训练重点：</strong>{{ selectedKnowledgeBase.focus_points }}
+              </p>
+              <p v-if="selectedKnowledgeBase.interviewer_prompt" class="knowledge-detail">
+                <strong>面试官要求：</strong>{{ selectedKnowledgeBase.interviewer_prompt }}
+              </p>
+            </div>
+          </template>
+        </div>
+
         <div class="form-group">
           <label>面试难度</label>
           <select v-model="difficulty">
@@ -103,6 +156,26 @@
             <option :value="5">5 题（标准模式）</option>
             <option :value="8">8 题（深度模式）</option>
           </select>
+        </div>
+        <div class="card panel-mode-card" style="margin-bottom:16px">
+          <label class="panel-mode-toggle">
+            <input v-model="multiInterviewerEnabled" type="checkbox" />
+            <span>
+              <strong>多面试官协同模式（第一阶段）</strong>
+              <small>内部由多个训练角色协同出题和评估，对外仍只显示一个主持人，不改变当前交互形态。</small>
+            </span>
+          </label>
+          <div v-if="multiInterviewerEnabled" class="panel-mode-preview">
+            <div class="panel-preview-row">
+              <span class="panel-preview-label">协同视角</span>
+              <div class="panel-preview-tags">
+                <span v-for="item in panelRoleHints" :key="item" class="panel-preview-tag">{{ item }}</span>
+              </div>
+            </div>
+            <p class="panel-preview-note">
+              外部仍然是单主持人面试流程；内部会额外综合多个训练视角做选题、追问和评估。
+            </p>
+          </div>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
         <button class="btn-primary" style="width:100%" @click="handleStart" :disabled="starting">
@@ -140,10 +213,11 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { uploadResume, getResume } from '../api/resume'
 import { startInterview } from '../api/interview'
+import { getKnowledgeBases } from '../api/knowledgeBase'
 
 const router = useRouter()
 const step = ref(1)
@@ -151,12 +225,33 @@ const file = ref(null)
 const targetPosition = ref('Python后端开发工程师')
 const difficulty = ref('medium')
 const totalQuestions = ref(5)
+const multiInterviewerEnabled = ref(false)
 const uploading = ref(false)
 const starting = ref(false)
 const error = ref('')
 const resumeId = ref(null)
 const parsedContent = ref(null)
 const analysis = ref(null)
+const knowledgeLoading = ref(false)
+const knowledgeBases = ref([])
+const selectedKnowledgeBaseId = ref('')
+const panelRoleHints = ['技术深挖', '项目追问', '业务场景', '表达结构', '压力质询']
+
+const selectedKnowledgeBase = computed(() => {
+  const id = Number(selectedKnowledgeBaseId.value)
+  if (!id) return null
+  return knowledgeBases.value.find(item => item.knowledge_base_id === id) || null
+})
+
+const knowledgeBaseOptions = computed(() => {
+  return [...knowledgeBases.value].sort((a, b) => {
+    const scoreDiff = matchScore(b) - matchScore(a)
+    if (scoreDiff !== 0) return scoreDiff
+    const scopeDiff = ownershipScore(b) - ownershipScore(a)
+    if (scopeDiff !== 0) return scopeDiff
+    return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime()
+  })
+})
 
 // 解析动画相关
 const progress = ref(0)
@@ -234,6 +329,48 @@ function onDrop(e) {
   if (f && f.name.endsWith('.pdf')) file.value = f
 }
 
+function normalizePosition(value) {
+  return (value || '').trim().toLowerCase()
+}
+
+function matchScore(item) {
+  const target = normalizePosition(targetPosition.value)
+  const current = normalizePosition(item?.target_position)
+  if (!target || !current) return 0
+  if (current === target) return 2
+  if (current.includes(target) || target.includes(current)) return 1
+  return 0
+}
+
+function ownershipScore(item) {
+  return item?.scope === 'private' ? 1 : 0
+}
+
+async function loadKnowledgeBases() {
+  knowledgeLoading.value = true
+  try {
+    const data = await getKnowledgeBases()
+    knowledgeBases.value = data.items || []
+
+    if (!selectedKnowledgeBaseId.value) {
+      const bestMatch = [...knowledgeBases.value]
+        .sort((a, b) => {
+          const scoreDiff = matchScore(b) - matchScore(a)
+          if (scoreDiff !== 0) return scoreDiff
+          return ownershipScore(b) - ownershipScore(a)
+        })[0]
+      if (bestMatch && matchScore(bestMatch) > 0) {
+        selectedKnowledgeBaseId.value = String(bestMatch.knowledge_base_id)
+      }
+    }
+  } catch (e) {
+    console.error('加载知识库失败:', e)
+    knowledgeBases.value = []
+  } finally {
+    knowledgeLoading.value = false
+  }
+}
+
 async function handleUpload() {
   error.value = ''
   uploading.value = true
@@ -254,6 +391,7 @@ async function handleUpload() {
       if (detail.status === 'completed') {
         parsedContent.value = detail.parsed_content
         analysis.value = detail.analysis
+        await loadKnowledgeBases()
         // 完成动画
         progress.value = 100
         parsingTitle.value = '解析完成！'
@@ -336,6 +474,19 @@ function stopStartingAnimation() {
   if (startProgressTimer) { clearTimeout(startProgressTimer); startProgressTimer = null }
 }
 
+function cacheInterviewMeta(interviewId, data) {
+  const meta = {
+    interviewId,
+    interviewMode: data?.interview_mode || (multiInterviewerEnabled.value ? 'panel' : 'single'),
+    totalQuestions: data?.total_questions || totalQuestions.value,
+    knowledgeBaseTitle: data?.knowledge_base_title || selectedKnowledgeBase.value?.title || '',
+    targetPosition: targetPosition.value,
+    multiInterviewerEnabled: !!multiInterviewerEnabled.value
+  }
+  sessionStorage.setItem(`interview_meta_${interviewId}`, JSON.stringify(meta))
+  return meta
+}
+
 async function handleStart() {
   error.value = ''
   starting.value = true
@@ -346,15 +497,24 @@ async function handleStart() {
     const data = await startInterview({
       resume_id: resumeId.value,
       target_position: targetPosition.value,
+      knowledge_base_id: selectedKnowledgeBaseId.value ? Number(selectedKnowledgeBaseId.value) : null,
       difficulty: difficulty.value,
-      total_questions: totalQuestions.value
+      total_questions: totalQuestions.value,
+      multi_interviewer_enabled: multiInterviewerEnabled.value
     })
+    const interviewMeta = cacheInterviewMeta(data.interview_id, data)
     // 完成动画
     startProgress.value = 100
     startingTitle.value = '面试准备完成！'
     stopStartingAnimation()
     await new Promise(r => setTimeout(r, 800))
-    router.push(`/interview/${data.interview_id}`)
+    router.push({
+      path: `/interview/${data.interview_id}`,
+      query: {
+        mode: interviewMeta.interviewMode,
+        total: String(interviewMeta.totalQuestions)
+      }
+    })
   } catch (e) {
     stopStartingAnimation()
     error.value = e.message
@@ -437,5 +597,131 @@ async function handleStart() {
 }
 .analysis-two-col li::before, .analysis-section li::before {
   content: '•'; position: absolute; left: 0; color: #9ca3af;
+}
+.knowledge-card {
+  border: 1px solid #e5e7eb;
+}
+.knowledge-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.knowledge-desc {
+  color: #6b7280;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.knowledge-loading,
+.knowledge-empty {
+  font-size: 14px;
+  color: #6b7280;
+}
+.knowledge-preview {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+.knowledge-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.knowledge-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ede9fe;
+  color: #5b21b6;
+  font-size: 12px;
+  font-weight: 600;
+}
+.knowledge-tag.subtle {
+  background: #e5e7eb;
+  color: #4b5563;
+}
+.knowledge-tag.public-tag {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.knowledge-tag.private-tag {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+.knowledge-preview-text,
+.knowledge-detail {
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.8;
+}
+.knowledge-detail {
+  margin-top: 10px;
+}
+.panel-mode-card {
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.08), rgba(16, 185, 129, 0.08));
+  border: 1px solid rgba(79, 70, 229, 0.12);
+}
+.panel-mode-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+}
+.panel-mode-toggle input {
+  margin-top: 4px;
+}
+.panel-mode-toggle strong {
+  display: block;
+  font-size: 14px;
+  color: #111827;
+  margin-bottom: 4px;
+}
+.panel-mode-toggle small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #4b5563;
+}
+.panel-mode-preview {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(79, 70, 229, 0.08);
+}
+.panel-preview-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.panel-preview-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4338ca;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+.panel-preview-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.panel-preview-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #374151;
+  background: #eef2ff;
+  border: 1px solid rgba(79, 70, 229, 0.1);
+}
+.panel-preview-note {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4b5563;
 }
 </style>

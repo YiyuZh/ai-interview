@@ -2,9 +2,14 @@
   <div class="container">
     <div class="page-header">
       <h1>📋 面试记录</h1>
-      <router-link to="/resume/upload" class="btn-primary" style="display:inline-block;padding:10px 24px;color:white;border-radius:8px">
-        + 开始新面试
-      </router-link>
+      <div class="header-actions">
+        <router-link to="/knowledge-base" class="btn-secondary" style="display:inline-block;padding:10px 18px;border-radius:8px">
+          岗位知识库
+        </router-link>
+        <router-link to="/resume/upload" class="btn-primary" style="display:inline-block;padding:10px 24px;color:white;border-radius:8px">
+          + 开始新面试
+        </router-link>
+      </div>
     </div>
 
     <div v-if="loading" class="loading">加载中...</div>
@@ -84,6 +89,10 @@ async function handleDelete(interviewId) {
   justify-content: space-between;
   align-items: center;
   margin: 20px 0;
+}
+.header-actions {
+  display: flex;
+  gap: 10px;
 }
 .page-header h1 {
   font-size: 22px;
