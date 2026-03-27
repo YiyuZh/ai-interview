@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # Database
     POSTGRES_USER: str = "demo"
     POSTGRES_PASSWORD: str = "demo123"
-    POSTGRES_HOST: str = "192.168.110.90"
+    POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "demo"
 
