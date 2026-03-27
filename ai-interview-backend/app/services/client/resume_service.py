@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Dict
+from typing import Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.resume import Resume
@@ -23,7 +23,8 @@ class ResumeService:
         user_id: int,
         file_content: bytes,
         file_name: str,
-        target_position: str
+        target_position: str,
+        ai_config: Optional[Dict] = None,
     ) -> Dict:
         """上传简历文件并触发 AI 解析和分析"""
         # 保存文件到本地
@@ -55,11 +56,11 @@ class ResumeService:
 
         # 调用 AI 解析简历
         try:
-            parsed = await AIService.parse_resume(resume_text)
+            parsed = await AIService.parse_resume(resume_text, ai_config=ai_config)
             resume.parsed_content = json.dumps(parsed, ensure_ascii=False)
 
             # 调用 AI 分析简历质量
-            analysis = await AIService.analyze_resume(parsed, target_position)
+            analysis = await AIService.analyze_resume(parsed, target_position, ai_config=ai_config)
             resume.analysis = json.dumps(analysis, ensure_ascii=False)
 
             resume.status = "completed"

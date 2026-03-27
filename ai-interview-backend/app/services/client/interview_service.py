@@ -766,6 +766,7 @@ class InterviewService:
         difficulty: str,
         total_questions: int,
         multi_interviewer_enabled: bool = False,
+        ai_config: Optional[Dict] = None,
     ) -> Dict:
         result = await db.execute(
             select(Resume).where(
@@ -807,6 +808,7 @@ class InterviewService:
                     question_plan=question_plan,
                     knowledge_base=knowledge_base_context,
                     panel_snapshot=panel_snapshot,
+                    ai_config=ai_config,
                 )
                 if panel_payload.get("moderator_style"):
                     panel_snapshot["moderator_style"] = panel_payload["moderator_style"]
@@ -830,6 +832,7 @@ class InterviewService:
                     count=total_questions,
                     knowledge_base=knowledge_base_context,
                     question_plan=question_plan,
+                    ai_config=ai_config,
                 )
                 questions = InterviewService._normalize_questions(
                     raw_questions=raw_questions,
@@ -846,6 +849,7 @@ class InterviewService:
                     count=total_questions,
                     knowledge_base=knowledge_base_context,
                     question_plan=question_plan,
+                    ai_config=ai_config,
                 )
                 questions = InterviewService._normalize_questions(
                     raw_questions=raw_questions,
@@ -906,6 +910,7 @@ class InterviewService:
         user_id: int,
         interview_id: int,
         answer: str,
+        ai_config: Optional[Dict] = None,
     ) -> Dict:
         result = await db.execute(
             select(Interview).where(
@@ -956,6 +961,7 @@ class InterviewService:
                     knowledge_base=knowledge_base_context,
                     question_meta=current_question_meta,
                     panel_snapshot=interview.panel_snapshot,
+                    ai_config=ai_config,
                 )
             else:
                 evaluation = await AIService.evaluate_answer(
@@ -965,6 +971,7 @@ class InterviewService:
                     chat_history=chat_history,
                     knowledge_base=knowledge_base_context,
                     question_meta=current_question_meta,
+                    ai_config=ai_config,
                 )
         except Exception as exc:
             if interview.interview_mode != "panel":
@@ -978,6 +985,7 @@ class InterviewService:
                 chat_history=chat_history,
                 knowledge_base=knowledge_base_context,
                 question_meta=current_question_meta,
+                ai_config=ai_config,
             )
 
         score = float(evaluation.get("score", 5.0))
@@ -1043,6 +1051,7 @@ class InterviewService:
                         knowledge_base=knowledge_base_context,
                         panel_snapshot=interview.panel_snapshot,
                         report_signals=report_signals,
+                        ai_config=ai_config,
                     )
                 else:
                     report = await AIService.generate_report(
@@ -1052,6 +1061,7 @@ class InterviewService:
                         knowledge_base=knowledge_base_context,
                         panel_snapshot=interview.panel_snapshot,
                         report_signals=report_signals,
+                        ai_config=ai_config,
                     )
             except Exception as exc:
                 logger.warning("Primary report generation failed, fallback to single report: %s", exc)
@@ -1062,6 +1072,7 @@ class InterviewService:
                     knowledge_base=knowledge_base_context,
                     panel_snapshot=interview.panel_snapshot,
                     report_signals=report_signals,
+                    ai_config=ai_config,
                 )
                 report["fallback_mode"] = "single_report_fallback"
 
@@ -1116,6 +1127,7 @@ class InterviewService:
         user_id: int,
         interview_id: int,
         answer: str,
+        ai_config: Optional[Dict] = None,
     ):
         try:
             result = await InterviewService.submit_answer(
@@ -1123,6 +1135,7 @@ class InterviewService:
                 user_id=user_id,
                 interview_id=interview_id,
                 answer=answer,
+                ai_config=ai_config,
             )
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'content': str(exc)}, ensure_ascii=False)}\n\n"

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.api.client.deps import get_current_user
 from app.services.client.resume_service import resume_service
+from app.services.common.deepseek_config_service import deepseek_config_service
 from app.schemas.response import ApiResponse
 from app.models.user import User
 from app.exceptions.http_exceptions import ValidationError
@@ -32,7 +33,11 @@ async def upload_resume(
         user_id=current_user.id,
         file_content=content,
         file_name=file.filename,
-        target_position=target_position
+        target_position=target_position,
+        ai_config=deepseek_config_service.build_runtime_config(
+            current_user,
+            require_personal_key=True,
+        ),
     )
     return ApiResponse.success(data=result)
 

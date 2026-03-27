@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, Table, JSON, DECIMAL, TIMESTAMP
+from sqlalchemy import Boolean, Column, Integer, String, Text, DateTime, ForeignKey, Table, JSON, DECIMAL, TIMESTAMP
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
@@ -28,6 +28,14 @@ class User(BaseModel):
     is_verified = Column(Boolean, default=False)
     email_verified_at = Column(TIMESTAMP(timezone=True), nullable=True)
     last_active_at = Column(TIMESTAMP(timezone=True), nullable=True, default=func.now())
+    ai_provider = Column(String(20), nullable=False, default="deepseek")
+    deepseek_use_personal_api = Column(Boolean, nullable=False, default=False)
+    deepseek_api_key_encrypted = Column(Text, nullable=True)
+    deepseek_base_url = Column(String(255), nullable=True)
+    deepseek_model = Column(String(100), nullable=True)
+    openai_api_key_encrypted = Column(Text, nullable=True)
+    openai_base_url = Column(String(255), nullable=True)
+    openai_model = Column(String(100), nullable=True)
 
     @staticmethod
     def get_password_hash(password: str) -> str:
@@ -35,4 +43,3 @@ class User(BaseModel):
 
     def verify_password(self, plain_password: str) -> bool:
         return pwd_context.verify(plain_password, self.hashed_password)
-

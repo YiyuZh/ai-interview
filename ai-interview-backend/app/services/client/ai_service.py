@@ -3,16 +3,21 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence
 
-from openai import AsyncOpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    AuthenticationError as OpenAIAuthenticationError,
+    BadRequestError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 from app.core.config import settings
+from app.exceptions.http_exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
-
-client = AsyncOpenAI(
-    api_key=settings.DEEPSEEK_API_KEY,
-    base_url=settings.DEEPSEEK_BASE_URL,
-)
 
 PANEL_OUTPUT_VERSION = "panel_structured_v1"
 PANEL_ROLE_ALIAS = {
@@ -58,24 +63,93 @@ DEFAULT_PANEL_ROLES = [
 
 class AIService:
     @staticmethod
-    async def _chat(messages: list, temperature: float = 0.7) -> str:
+    def _resolve_runtime(ai_config: Optional[Dict] = None):
+        if ai_config and ai_config.get("api_key"):
+            provider = (ai_config.get("provider") or "deepseek").strip().lower()
+            default_base_url = (
+                settings.OPENAI_BASE_URL if provider == "openai" else settings.DEEPSEEK_BASE_URL
+            )
+            default_model = (
+                settings.OPENAI_MODEL if provider == "openai" else settings.DEEPSEEK_MODEL
+            )
+            return (
+                AsyncOpenAI(
+                    api_key=ai_config["api_key"],
+                    base_url=ai_config.get("base_url") or default_base_url,
+                ),
+                ai_config.get("model") or default_model,
+                ai_config.get("source") or "user",
+                ai_config.get("provider_label") or ("ChatGPT / OpenAI" if provider == "openai" else "DeepSeek"),
+            )
+        raise ValidationError(message="请先在个人中心保存可用的 AI API Key")
+
+    @staticmethod
+    def _translate_runtime_error(
+        exc: Exception,
+        source: str = "user",
+        provider_label: str = "AI",
+    ) -> ValidationError:
+        if isinstance(exc, ValidationError):
+            return exc
+        if isinstance(exc, (OpenAIAuthenticationError, PermissionDeniedError)):
+            return ValidationError(message=f"{provider_label} API Token 无效或已失效，请检查后重试")
+        if isinstance(exc, RateLimitError):
+            return ValidationError(message=f"{provider_label} API Token 额度不足或请求过于频繁，请检查后重试")
+        if isinstance(exc, (APIConnectionError, APITimeoutError)):
+            return ValidationError(message=f"连接 {provider_label} 失败，请检查网络或 Base URL 后重试")
+        if isinstance(exc, BadRequestError):
+            return ValidationError(message=f"{provider_label} 请求参数错误，请检查模型名或 Base URL 配置")
+        if isinstance(exc, APIStatusError):
+            status_code = getattr(exc, "status_code", None)
+            if status_code in {401, 403}:
+                return ValidationError(message=f"{provider_label} API Token 无效或已失效，请检查后重试")
+            if status_code in {402, 429}:
+                return ValidationError(message=f"{provider_label} API Token 额度不足或请求过于频繁，请检查后重试")
+            if status_code in {502, 503, 504}:
+                return ValidationError(message=f"连接 {provider_label} 失败，请稍后重试")
+        return ValidationError(
+            message=(
+                f"调用你的 {provider_label} API 失败，请检查 API Token、Base URL 配置，"
+                "或稍后再试"
+            )
+        )
+
+    @staticmethod
+    async def _chat(
+        messages: list,
+        temperature: float = 0.7,
+        ai_config: Optional[Dict] = None,
+    ) -> str:
+        client, model, source, provider_label = AIService._resolve_runtime(ai_config)
         try:
             response = await client.chat.completions.create(
-                model=settings.DEEPSEEK_MODEL,
+                model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=2000,
             )
             return (response.choices[0].message.content or "").strip()
         except Exception as exc:
-            logger.error("DeepSeek chat call failed: %s", exc)
-            raise
+            logger.exception("AI provider chat call failed (%s): %s", source, exc)
+            translated = AIService._translate_runtime_error(
+                exc,
+                source=source,
+                provider_label=provider_label,
+            )
+            if translated is exc:
+                raise
+            raise translated from exc
 
     @staticmethod
-    async def _chat_stream(messages: list, temperature: float = 0.7):
+    async def _chat_stream(
+        messages: list,
+        temperature: float = 0.7,
+        ai_config: Optional[Dict] = None,
+    ):
+        client, model, source, provider_label = AIService._resolve_runtime(ai_config)
         try:
             stream = await client.chat.completions.create(
-                model=settings.DEEPSEEK_MODEL,
+                model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=2000,
@@ -86,8 +160,15 @@ class AIService:
                 if content:
                     yield content
         except Exception as exc:
-            logger.error("DeepSeek stream call failed: %s", exc)
-            raise
+            logger.exception("AI provider stream call failed (%s): %s", source, exc)
+            translated = AIService._translate_runtime_error(
+                exc,
+                source=source,
+                provider_label=provider_label,
+            )
+            if translated is exc:
+                raise
+            raise translated from exc
 
     @staticmethod
     def _extract_json(text: str) -> Any:
@@ -628,7 +709,7 @@ class AIService:
         return normalized
 
     @staticmethod
-    async def parse_resume(resume_text: str) -> dict:
+    async def parse_resume(resume_text: str, ai_config: Optional[Dict] = None) -> dict:
         messages = [
             {
                 "role": "system",
@@ -643,11 +724,15 @@ class AIService:
                 "content": f"Resume text:\n{resume_text}",
             },
         ]
-        result = await AIService._chat(messages, temperature=0.2)
+        result = await AIService._chat(messages, temperature=0.2, ai_config=ai_config)
         return AIService._extract_json(result)
 
     @staticmethod
-    async def analyze_resume(parsed_resume: dict, target_position: str) -> dict:
+    async def analyze_resume(
+        parsed_resume: dict,
+        target_position: str,
+        ai_config: Optional[Dict] = None,
+    ) -> dict:
         messages = [
             {
                 "role": "system",
@@ -668,7 +753,7 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.4)
+        result = await AIService._chat(messages, temperature=0.4, ai_config=ai_config)
         return AIService._extract_json(result)
 
     @staticmethod
@@ -679,6 +764,7 @@ class AIService:
         count: int,
         knowledge_base: Optional[dict] = None,
         question_plan: Optional[Sequence[Dict]] = None,
+        ai_config: Optional[Dict] = None,
     ) -> list:
         difficulty_desc = {
             "easy": "junior-friendly, focus on fundamentals and clear project narration",
@@ -711,7 +797,7 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.65)
+        result = await AIService._chat(messages, temperature=0.65, ai_config=ai_config)
         return AIService._normalize_question_array(AIService._extract_json(result))
 
     @staticmethod
@@ -723,6 +809,7 @@ class AIService:
         question_plan: Sequence[Dict],
         knowledge_base: Optional[dict] = None,
         panel_snapshot: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ) -> dict:
         difficulty_desc = {
             "easy": "keep the bar realistic and training-oriented",
@@ -760,7 +847,7 @@ class AIService:
                 "content": f"Candidate resume JSON: {AIService._resume_snapshot(parsed_resume)}",
             },
         ]
-        result = await AIService._chat(messages, temperature=0.5)
+        result = await AIService._chat(messages, temperature=0.5, ai_config=ai_config)
         payload = AIService._extract_json(result)
         normalized = AIService._normalize_panel_question_payload(
             payload=payload,
@@ -784,6 +871,7 @@ class AIService:
         next_question: Optional[str] = None,
         knowledge_base: Optional[dict] = None,
         question_meta: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ) -> dict:
         selected_slices = (question_meta or {}).get("selected_slices") or None
         messages = [
@@ -811,7 +899,7 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.35)
+        result = await AIService._chat(messages, temperature=0.35, ai_config=ai_config)
         return AIService._extract_json(result)
 
     @staticmethod
@@ -823,6 +911,7 @@ class AIService:
         knowledge_base: Optional[dict] = None,
         question_meta: Optional[Dict] = None,
         panel_snapshot: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ) -> dict:
         selected_slices = (question_meta or {}).get("selected_slices") or None
         messages = [
@@ -860,7 +949,7 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.3)
+        result = await AIService._chat(messages, temperature=0.3, ai_config=ai_config)
         payload = AIService._extract_json(result)
         normalized = AIService._normalize_panel_evaluation_payload(
             payload=payload,
@@ -882,6 +971,7 @@ class AIService:
         chat_history: list,
         knowledge_base: Optional[dict] = None,
         question_meta: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ):
         result = await AIService.evaluate_answer(
             question=question,
@@ -890,6 +980,7 @@ class AIService:
             chat_history=chat_history,
             knowledge_base=knowledge_base,
             question_meta=question_meta,
+            ai_config=ai_config,
         )
         feedback = result.get("feedback", "")
         if feedback:
@@ -938,6 +1029,7 @@ class AIService:
         knowledge_base: Optional[dict] = None,
         panel_snapshot: Optional[Dict] = None,
         report_signals: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ) -> dict:
         messages = [
             {
@@ -960,7 +1052,7 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.35)
+        result = await AIService._chat(messages, temperature=0.35, ai_config=ai_config)
         return AIService._extract_json(result)
 
     @staticmethod
@@ -971,6 +1063,7 @@ class AIService:
         knowledge_base: Optional[dict] = None,
         panel_snapshot: Optional[Dict] = None,
         report_signals: Optional[Dict] = None,
+        ai_config: Optional[Dict] = None,
     ) -> dict:
         messages = [
             {
@@ -996,5 +1089,5 @@ class AIService:
                 ),
             },
         ]
-        result = await AIService._chat(messages, temperature=0.3)
+        result = await AIService._chat(messages, temperature=0.3, ai_config=ai_config)
         return AIService._extract_json(result)

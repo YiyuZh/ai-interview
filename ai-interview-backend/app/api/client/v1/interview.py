@@ -8,6 +8,7 @@ from app.models.user import User
 from app.schemas.client.interview import AnswerSubmit, InterviewStart
 from app.schemas.response import ApiResponse
 from app.services.client.interview_service import interview_service
+from app.services.common.deepseek_config_service import deepseek_config_service
 
 router = APIRouter()
 
@@ -27,6 +28,10 @@ async def start_interview(
         difficulty=data.difficulty,
         total_questions=data.total_questions,
         multi_interviewer_enabled=data.multi_interviewer_enabled,
+        ai_config=deepseek_config_service.build_runtime_config(
+            current_user,
+            require_personal_key=True,
+        ),
     )
     return ApiResponse.success(data=result)
 
@@ -43,6 +48,10 @@ async def submit_answer(
         user_id=current_user.id,
         interview_id=interview_id,
         answer=data.answer,
+        ai_config=deepseek_config_service.build_runtime_config(
+            current_user,
+            require_personal_key=True,
+        ),
     )
     return ApiResponse.success(data=result)
 
@@ -59,6 +68,10 @@ async def submit_answer_stream(
         user_id=current_user.id,
         interview_id=interview_id,
         answer=data.answer,
+        ai_config=deepseek_config_service.build_runtime_config(
+            current_user,
+            require_personal_key=True,
+        ),
     )
     return StreamingResponse(
         generator,

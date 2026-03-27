@@ -61,6 +61,7 @@ class Settings(BaseSettings):
 
     # JWT
     SECRET_KEY: str = "your-secret-key-change-in-production"
+    USER_LLM_CREDENTIAL_SECRET: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
 
     # OpenAI
     OPENAI_API_KEY: str = "your-openai-api-key"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-5.2-chat-latest"
 
     # DeepSeek
     DEEPSEEK_API_KEY: str = "your-deepseek-api-key"
