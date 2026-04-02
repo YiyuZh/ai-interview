@@ -13,6 +13,22 @@ from app.services.common.deepseek_config_service import deepseek_config_service
 router = APIRouter()
 
 
+def _build_interview_runtime_config(
+    current_user: User,
+    ai_provider: str | None,
+    ai_model: str | None,
+) -> dict:
+    ai_config = deepseek_config_service.build_runtime_config(
+        current_user,
+        require_personal_key=True,
+        provider=ai_provider,
+    )
+    model = (ai_model or "").strip()
+    if model:
+        ai_config["model"] = model
+    return ai_config
+
+
 @router.post("/start")
 async def start_interview(
     data: InterviewStart,
@@ -28,9 +44,10 @@ async def start_interview(
         difficulty=data.difficulty,
         total_questions=data.total_questions,
         multi_interviewer_enabled=data.multi_interviewer_enabled,
-        ai_config=deepseek_config_service.build_runtime_config(
+        ai_config=_build_interview_runtime_config(
             current_user,
-            require_personal_key=True,
+            data.ai_provider,
+            data.ai_model,
         ),
     )
     return ApiResponse.success(data=result)

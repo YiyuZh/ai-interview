@@ -233,6 +233,9 @@
           </div>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
+        <ul v-if="startErrorTips.length" class="error-tip-list">
+          <li v-for="tip in startErrorTips" :key="tip">{{ tip }}</li>
+        </ul>
         <button class="btn-primary" style="width:100%" @click="handleStart" :disabled="starting">
           {{ starting ? '生成面试题中...' : '🚀 开始面试' }}
         </button>
@@ -331,6 +334,7 @@ const activeAiProviderLabel = computed(() => aiProviderLabels[aiTestProvider.val
 const activeAiModelOptions = computed(() => aiProviderModelOptions[aiTestProvider.value] || [])
 const aiTestModelPlaceholder = computed(() => aiProviderDefaults[aiTestProvider.value]?.model || '')
 const currentAiModelDisplay = computed(() => aiTestModel.value?.trim() || aiTestModelPlaceholder.value || '未选择模型')
+const startErrorTips = computed(() => buildStartErrorTips(error.value))
 
 const selectedKnowledgeBase = computed(() => {
   const id = Number(selectedKnowledgeBaseId.value)
@@ -669,6 +673,65 @@ function cacheInterviewMeta(interviewId, data) {
   return meta
 }
 
+function buildStartErrorTips(message) {
+  const text = (message || '').trim()
+  if (!text) return []
+
+  if (text.includes('API Key') || text.includes('API Token')) {
+    return [
+      '先在当前页面点一次“检测连接”，确认你选择的服务商和模型真的可用。',
+      '如果检测失败，请去个人中心更新 API Key，或切换到另一个可用模型后再试。'
+    ]
+  }
+
+  if (text.includes('Base URL') || text.includes('模型名') || text.includes('请求参数错误')) {
+    return [
+      '当前模型配置看起来不可用，请先检查模型名是否准确。',
+      '如果你自定义了 Base URL，建议先恢复为官方默认地址后再测试。'
+    ]
+  }
+
+  if (text.includes('连接') || text.includes('稍后重试')) {
+    return [
+      '这通常是模型服务临时不可用或响应不稳定，建议先点“检测连接”。',
+      '如果你连续失败，可以切换到同服务商下的另一个模型再开始面试。'
+    ]
+  }
+
+  if (text.includes('简历解析结果异常') || text.includes('简历解析结果为空')) {
+    return [
+      '这份简历的结构化结果可能异常，建议重新上传并重新解析一次。',
+      '如果还是复现，请更换模型后重试，便于区分是数据问题还是模型返回问题。'
+    ]
+  }
+
+  if (text.includes('简历尚未解析完成')) {
+    return [
+      '简历还没有真正进入 completed 状态，请稍等几秒后重新点击开始面试。',
+      '如果长时间不完成，请先回到上传页查看解析状态或失败原因。'
+    ]
+  }
+
+  if (text.includes('岗位知识库')) {
+    return [
+      '先改成“不使用知识库”再试一次，确认是否是知识库状态或权限问题。',
+      '如果不使用知识库可以开始面试，再回头检查这份知识库是否已停用或不可见。'
+    ]
+  }
+
+  if (text.includes('题目生成数量不足') || text.includes('题目生成失败')) {
+    return [
+      '当前模型没有稳定返回足够题目，建议先切换模型再试。',
+      '也可以先把题目数量调低，或关闭“多面试官协同模式”后再验证一次。'
+    ]
+  }
+
+  return [
+    '建议先点“检测连接”确认当前服务商和模型可用。',
+    '如果仍失败，请记录这条错误信息，便于后续继续定位开始面试链路。'
+  ]
+}
+
 async function handleStart() {
   error.value = ''
   starting.value = true
@@ -680,6 +743,8 @@ async function handleStart() {
       resume_id: resumeId.value,
       target_position: targetPosition.value,
       knowledge_base_id: selectedKnowledgeBaseId.value ? Number(selectedKnowledgeBaseId.value) : null,
+      ai_provider: aiTestProvider.value,
+      ai_model: aiTestModel.value?.trim() || aiTestModelPlaceholder.value || null,
       difficulty: difficulty.value,
       total_questions: totalQuestions.value,
       multi_interviewer_enabled: multiInterviewerEnabled.value
@@ -724,6 +789,13 @@ async function handleStart() {
 }
 .upload-area:hover { border-color: #4f46e5; }
 .error { color: #ef4444; font-size: 13px; margin-bottom: 12px; }
+.error-tip-list {
+  margin: -4px 0 12px 18px;
+  padding: 0;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.7;
+}
 .parsed-info p { font-size: 14px; margin-bottom: 6px; line-height: 1.6; }
 .api-test-card {
   border: 1px solid #e5e7eb;

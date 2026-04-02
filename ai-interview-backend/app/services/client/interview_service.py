@@ -182,6 +182,47 @@ PANEL_ROLE_TITLES = {
 
 class InterviewService:
     @staticmethod
+    def _load_resume_payload(resume: Resume) -> Dict[str, Any]:
+        payload = (resume.parsed_content or "").strip()
+        if not payload:
+            raise ValidationError(message="开始面试失败：简历解析结果为空，请重新解析后再试")
+        try:
+            parsed_resume = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(
+                message="开始面试失败：简历解析结果异常，请重新上传简历或重新解析"
+            ) from exc
+        if not isinstance(parsed_resume, dict):
+            raise ValidationError(
+                message="开始面试失败：简历解析结果异常，请重新上传简历或重新解析"
+            )
+        return parsed_resume
+
+    @staticmethod
+    def _format_start_interview_error(detail: Optional[str]) -> str:
+        message = (detail or "").strip()
+        if not message:
+            return "开始面试失败：题目生成服务异常，请稍后重试"
+        if message.startswith("开始面试失败："):
+            return message
+        if "题目生成数量不足" in message:
+            return "开始面试失败：当前模型返回的题目数量不足，请切换模型或稍后重试"
+        if "题目生成失败" in message:
+            return "开始面试失败：AI 题目生成失败，请更换模型或稍后重试"
+        if (
+            "API Key" in message
+            or "API Token" in message
+            or "Base URL" in message
+            or "模型名" in message
+            or "连接 " in message
+            or "请求参数错误" in message
+        ):
+            return f"开始面试失败：{message}"
+        if "岗位知识库" in message or "简历" in message:
+            return message if message.startswith("开始面试失败：") else f"开始面试失败：{message}"
+        return f"开始面试失败：{message}"
+
+    @staticmethod
     def _serialize_knowledge_base(knowledge_base: Optional[PositionKnowledgeBase]) -> Optional[Dict]:
         if not knowledge_base:
             return None
@@ -871,7 +912,7 @@ class InterviewService:
         if resume.status != "completed":
             raise ValidationError(message="简历尚未解析完成")
 
-        parsed_resume = json.loads(resume.parsed_content)
+        parsed_resume = InterviewService._load_resume_payload(resume)
         knowledge_base_context = await InterviewService._resolve_knowledge_base(
             db=db,
             user_id=user_id,
@@ -930,31 +971,46 @@ class InterviewService:
                     question_plan=question_plan,
                     interview_mode="single",
                 )
+        except ValidationError as exc:
+            raise ValidationError(
+                message=InterviewService._format_start_interview_error(exc.detail)
+            ) from exc
         except Exception as exc:
             if interview_mode == "panel":
                 logger.warning("Panel question generation failed, fallback to single mode: %s", exc)
-                raw_questions = await AIService.generate_questions(
-                    parsed_resume=parsed_resume,
-                    target_position=target_position,
-                    difficulty=difficulty,
-                    count=total_questions,
-                    knowledge_base=knowledge_base_context,
-                    question_plan=question_plan,
-                    ai_config=ai_config,
-                )
-                questions = InterviewService._normalize_questions(
-                    raw_questions=raw_questions,
-                    question_plan=question_plan,
-                    interview_mode="single",
-                )
-                interview_mode = "single"
-                panel_snapshot = InterviewService._build_panel_snapshot(
-                    mode="single",
-                    requested_panel=True,
-                    fallback_reason="panel_generation_failed",
-                )
+                try:
+                    raw_questions = await AIService.generate_questions(
+                        parsed_resume=parsed_resume,
+                        target_position=target_position,
+                        difficulty=difficulty,
+                        count=total_questions,
+                        knowledge_base=knowledge_base_context,
+                        question_plan=question_plan,
+                        ai_config=ai_config,
+                    )
+                    questions = InterviewService._normalize_questions(
+                        raw_questions=raw_questions,
+                        question_plan=question_plan,
+                        interview_mode="single",
+                    )
+                    interview_mode = "single"
+                    panel_snapshot = InterviewService._build_panel_snapshot(
+                        mode="single",
+                        requested_panel=True,
+                        fallback_reason="panel_generation_failed",
+                    )
+                except ValidationError as inner_exc:
+                    raise ValidationError(
+                        message=InterviewService._format_start_interview_error(inner_exc.detail)
+                    ) from inner_exc
+                except Exception as inner_exc:
+                    logger.exception("Single question fallback failed: %s", inner_exc)
+                    raise ValidationError(
+                        message="开始面试失败：题目生成服务异常，请稍后重试"
+                    ) from inner_exc
             else:
-                raise ValidationError(message="AI 题目生成失败，请稍后重试") from exc
+                logger.exception("Question generation failed: %s", exc)
+                raise ValidationError(message="开始面试失败：题目生成服务异常，请稍后重试") from exc
 
         questions = InterviewService._serialize_questions(questions)
         interview = Interview(

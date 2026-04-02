@@ -9,6 +9,8 @@ class InterviewStart(BaseSchema):
     resume_id: int
     target_position: str = "Python后端开发工程师"
     knowledge_base_id: Optional[int] = None
+    ai_provider: Optional[str] = None
+    ai_model: Optional[str] = None
     difficulty: Literal["easy", "medium", "hard"] = "medium"
     total_questions: int = Field(default=5, ge=3, le=10)
     multi_interviewer_enabled: bool = False
