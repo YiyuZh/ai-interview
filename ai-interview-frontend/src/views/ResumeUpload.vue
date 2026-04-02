@@ -385,7 +385,7 @@ async function handleUpload() {
 
     // 轮询等待解析完成
     let retries = 0
-    while (retries < 30) {
+    while (retries < 90) {
       await new Promise(r => setTimeout(r, 2000))
       const detail = await getResume(resumeId.value)
       if (detail.status === 'completed') {
@@ -401,11 +401,11 @@ async function handleUpload() {
         return
       }
       if (detail.status === 'failed') {
-        throw new Error('简历解析失败，请重试')
+        throw new Error(detail.error_message || '简历解析失败，请重试')
       }
       retries++
     }
-    throw new Error('解析超时，请重试')
+    throw new Error('简历解析超时，请稍后在上传记录中查看结果或重新尝试')
   } catch (e) {
     stopAnimations()
     error.value = e.message
@@ -725,3 +725,4 @@ async function handleStart() {
   color: #4b5563;
 }
 </style>
+

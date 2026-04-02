@@ -349,6 +349,13 @@ class PositionKnowledgeBaseSliceService:
         }
 
     @staticmethod
+    def _format_reason(prefix: str, values: Sequence[str], limit: int = 3) -> Optional[str]:
+        cleaned = [str(item).strip() for item in values or [] if str(item).strip()]
+        if not cleaned:
+            return None
+        return f"{prefix}：{' / '.join(cleaned[:limit])}"
+
+    @staticmethod
     async def rebuild_for_knowledge_base(db: AsyncSession, knowledge_base: PositionKnowledgeBase) -> List[Dict]:
         payloads = PositionKnowledgeBaseSliceService.build_slice_payloads(knowledge_base)
         await db.execute(
@@ -405,6 +412,7 @@ class PositionKnowledgeBaseSliceService:
             if not item.get("is_enabled", True):
                 continue
             score = float(item.get("priority") or 0)
+            reasons: List[str] = []
             stage_tags = item.get("stage_tags") or []
             role_tags = item.get("role_tags") or []
             scene_tags = item.get("scene_tags") or []
@@ -420,35 +428,56 @@ class PositionKnowledgeBaseSliceService:
             )
             overlap = len(query_tokens & PositionKnowledgeBaseSliceService._tokenize(searchable))
             score += min(overlap, 6) * 1.2
+            if overlap:
+                reasons.append(f"命中内容关键词 {min(overlap, 6)} 项")
             if stage and stage in stage_tags:
                 score += 4
+                reasons.append(f"匹配阶段：{stage}")
             if role and role in role_tags:
                 score += 3
+                reasons.append(f"匹配角色：{role}")
             if scene and scene in scene_tags:
                 score += 2.5
+                reasons.append(f"匹配场景：{scene}")
             if difficulty:
                 if slice_difficulty == difficulty:
                     score += 2
+                    reasons.append(f"匹配难度：{difficulty}")
                 elif slice_difficulty == "general":
                     score += 1
-            if skill_terms:
-                score += min(
-                    len(skill_terms & PositionKnowledgeBaseSliceService._normalize_terms(item.get("skill_tags"))),
-                    4,
-                ) * 1.5
-            if topic_terms:
-                score += min(
-                    len(topic_terms & PositionKnowledgeBaseSliceService._normalize_terms(item.get("topic_tags"))),
-                    4,
-                ) * 1.2
-            if weakness_tokens:
-                score += min(
-                    len(weakness_tokens & PositionKnowledgeBaseSliceService._normalize_terms(item.get("keywords"))),
-                    4,
-                ) * 1.4
+            matched_skill_terms = sorted(
+                skill_terms & PositionKnowledgeBaseSliceService._normalize_terms(item.get("skill_tags"))
+            )
+            if matched_skill_terms:
+                score += min(len(matched_skill_terms), 4) * 1.5
+                reason = PositionKnowledgeBaseSliceService._format_reason("命中技能", matched_skill_terms)
+                if reason:
+                    reasons.append(reason)
+            matched_topic_terms = sorted(
+                topic_terms & PositionKnowledgeBaseSliceService._normalize_terms(item.get("topic_tags"))
+            )
+            if matched_topic_terms:
+                score += min(len(matched_topic_terms), 4) * 1.2
+                reason = PositionKnowledgeBaseSliceService._format_reason("命中主题", matched_topic_terms)
+                if reason:
+                    reasons.append(reason)
+            matched_weakness_terms = sorted(
+                weakness_tokens & PositionKnowledgeBaseSliceService._normalize_terms(item.get("keywords"))
+            )
+            if matched_weakness_terms:
+                score += min(len(matched_weakness_terms), 4) * 1.4
+                reason = PositionKnowledgeBaseSliceService._format_reason("命中薄弱点", matched_weakness_terms)
+                if reason:
+                    reasons.append(reason)
             if item.get("source_section") == "focus_points":
                 score += 1.5
-            ranked.append((score, item))
+                reasons.append("来自重点训练项")
+            enriched_item = {
+                **item,
+                "routing_score": round(score, 2),
+                "routing_reasons": reasons[:6],
+            }
+            ranked.append((score, enriched_item))
 
         ranked.sort(
             key=lambda pair: (

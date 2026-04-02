@@ -631,6 +631,54 @@ class AIService:
         return "\n".join(lines)
 
     @staticmethod
+    def _build_grounding_rules(
+        task: str,
+        has_routed_evidence: bool = False,
+        has_report_evidence: bool = False,
+    ) -> str:
+        rules = [
+            "Grounding rules:",
+            "- Do not invent candidate experience, metrics, incidents, architecture details, business impact, or project facts.",
+            "- Treat the resume, routed slices, chat history, and answer content as the only trusted evidence sources.",
+        ]
+
+        if task in {"question", "panel_question"}:
+            rules.extend(
+                [
+                    "- If evidence is insufficient, ask a broader but still realistic interview question instead of a highly specific one.",
+                    "- Prefer clarification or scoped follow-up over pretending you already know hidden details.",
+                ]
+            )
+            if has_routed_evidence:
+                rules.append("- Use routed evidence as the first calibration source for topic, depth, and follow-up direction.")
+            else:
+                rules.append("- No routed evidence is guaranteed. Avoid assuming project details not clearly present in the resume.")
+        elif task in {"evaluation", "panel_evaluation"}:
+            rules.extend(
+                [
+                    "- Distinguish 'the candidate did not provide enough evidence/details' from 'the candidate definitely lacks this ability'.",
+                    "- If the answer lacks proof, score and feedback should say the evidence is insufficient instead of making hard claims.",
+                    "- Do not correct the candidate with invented implementation details that are absent from the answer or routed evidence.",
+                ]
+            )
+            if has_routed_evidence:
+                rules.append("- When routed evidence exists, use it to judge relevance, but do not claim the candidate said more than they actually said.")
+        elif task in {"report", "panel_report"}:
+            rules.extend(
+                [
+                    "- Summarize only what can be supported by interview records and aggregated evidence signals.",
+                    "- If evidence is weak, explicitly describe it as insufficient evidence instead of giving overconfident conclusions.",
+                    "- Training advice should stay close to repeated gaps, routed evidence, and actual interview performance.",
+                ]
+            )
+            if has_report_evidence:
+                rules.append("- Preserve evidence-backed highlights and keep them consistent with the retrieved evidence summary.")
+            else:
+                rules.append("- If report evidence is sparse, keep conclusions conservative and avoid over-specific diagnosis.")
+
+        return "\n".join(rules)
+
+    @staticmethod
     def _build_question_plan_context(question_plan: Optional[Sequence[Dict]]) -> str:
         if not question_plan:
             return ""
@@ -681,6 +729,17 @@ class AIService:
             lines.append(
                 f"- Retrieved slice ids: {', '.join(str(item) for item in report_signals.get('retrieved_slice_ids') or [])}"
             )
+        if report_signals.get("evidence_stats"):
+            stats = report_signals.get("evidence_stats") or {}
+            lines.append(
+                "- Evidence coverage: "
+                f"{stats.get('questions_with_evidence', 0)}/{stats.get('total_questions', 0)} questions, "
+                f"{stats.get('retrieved_slice_count', 0)} unique slices"
+            )
+        if report_signals.get("evidence_summary"):
+            lines.append("Evidence highlights:")
+            for item in report_signals.get("evidence_summary") or []:
+                lines.append(f"- {item}")
         if report_signals.get("panel_summary"):
             lines.append("Panel summaries:")
             for item in report_signals.get("panel_summary") or []:
@@ -773,6 +832,7 @@ class AIService:
         }.get(difficulty, "balanced")
         knowledge_context = AIService._build_knowledge_base_context(knowledge_base)
         plan_context = AIService._build_question_plan_context(question_plan)
+        has_routed_evidence = any((item.get("selected_slices") or []) for item in question_plan or [])
         messages = [
             {
                 "role": "system",
@@ -786,6 +846,7 @@ class AIService:
                     "Use the routed knowledge slices as the primary calibration source. "
                     "Return pure JSON array only with schema: "
                     '[{"index":0,"question":"...","category":"self-intro|project|technical|system-design|behavior"}].\n'
+                    f"{AIService._build_grounding_rules('question', has_routed_evidence=has_routed_evidence)}\n"
                     f"{knowledge_context}\n{plan_context}"
                 ),
             },
@@ -816,6 +877,7 @@ class AIService:
             "medium": "balance challenge and coaching value",
             "hard": "challenge the candidate with depth and pressure, but stay fair",
         }.get(difficulty, "balance challenge and coaching value")
+        has_routed_evidence = any((item.get("selected_slices") or []) for item in question_plan or [])
         messages = [
             {
                 "role": "system",
@@ -837,6 +899,7 @@ class AIService:
                     f"Generate exactly {count} selected questions. "
                     f"Target role: {target_position}. Difficulty guidance: {difficulty_desc}. "
                     "If routed slices exist, prefer them and reference the used slice ids in moderator.selected_questions[].used_slice_ids.\n"
+                    f"{AIService._build_grounding_rules('panel_question', has_routed_evidence=has_routed_evidence)}\n"
                     f"{AIService._build_panel_context(panel_snapshot)}\n"
                     f"{AIService._build_knowledge_base_context(knowledge_base)}\n"
                     f"{AIService._build_question_plan_context(question_plan)}"
@@ -883,6 +946,7 @@ class AIService:
                     "Reply in Simplified Chinese. "
                     'Schema: {"score":7.5,"feedback":"","follow_up":false,"strengths":[""],"gaps":[""]}. '
                     "Score range is 1-10. Feedback should be concise and actionable."
+                    f"\n{AIService._build_grounding_rules('evaluation', has_routed_evidence=bool(selected_slices))}"
                     f"\n{AIService._build_knowledge_base_context(knowledge_base, selected_slices=selected_slices)}"
                 ),
             },
@@ -930,6 +994,7 @@ class AIService:
                     '"retrieved_slice_ids":[1,2],"fallback_allowed":true},'
                     '"strengths":[""],"gaps":[""]}. '
                     "The outward feedback must remain one moderator voice and be concise."
+                    f"\n{AIService._build_grounding_rules('panel_evaluation', has_routed_evidence=bool(selected_slices))}"
                     f"\n{AIService._build_panel_context(panel_snapshot)}\n"
                     f"{AIService._build_knowledge_base_context(knowledge_base, selected_slices=selected_slices)}"
                 ),
@@ -1038,7 +1103,9 @@ class AIService:
                     "You are a senior interviewer writing a final mock-interview report. "
                     "Reply in Simplified Chinese and return pure JSON only. "
                     'Schema: {"summary":"","strengths":[""],"weaknesses":[""],'
-                    '"suggestions":[""],"hire_recommendation":"","training_priorities":[""],"common_gaps":[""]}. '
+                    '"suggestions":[""],"hire_recommendation":"","training_priorities":[""],'
+                    '"common_gaps":[""],"evidence_summary":[""]}. '
+                    f"\n{AIService._build_grounding_rules('report', has_report_evidence=bool((report_signals or {}).get('evidence_summary') or (report_signals or {}).get('retrieved_slice_ids')))}"
                     f"\n{AIService._build_knowledge_base_context(knowledge_base)}\n"
                     f"{AIService._build_report_signal_context(report_signals)}"
                 ),
@@ -1074,7 +1141,9 @@ class AIService:
                     'Schema: {"summary":"","strengths":[""],"weaknesses":[""],"suggestions":[""],'
                     '"hire_recommendation":"","training_priorities":[""],'
                     '"common_gaps":[""],'
+                    '"evidence_summary":[""],'
                     '"panel_summary":[{"role":"technical_deep_dive","title":"技术深挖","summary":""}]}. '
+                    f"\n{AIService._build_grounding_rules('panel_report', has_report_evidence=bool((report_signals or {}).get('evidence_summary') or (report_signals or {}).get('retrieved_slice_ids')))}"
                     f"\n{AIService._build_panel_context(panel_snapshot)}\n"
                     f"{AIService._build_knowledge_base_context(knowledge_base)}\n"
                     f"{AIService._build_report_signal_context(report_signals)}"

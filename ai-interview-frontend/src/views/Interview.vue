@@ -240,6 +240,10 @@ function normalizeRoundSummary(data) {
   if (sliceIds.length) {
     points.push(`参考切片：#${sliceIds.slice(0, 4).join(' / #')}`)
   }
+  const evidenceSummary = Array.isArray(data.evidence_summary) ? data.evidence_summary : []
+  evidenceSummary.slice(0, 2).forEach(item => {
+    if (item) points.push(`训练依据：${item}`)
+  })
   if (!points.length) {
     points.push('本轮回答已完成多视角内部评估，结果会汇总到最终报告。')
   }

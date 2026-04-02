@@ -115,6 +115,9 @@ def test_reroute_question_slices_and_report_signals_capture_round_metadata():
     assert 11 in selected_ids
     assert 11 in routed["used_slice_ids"]
     assert 11 in routed["panel_context"]["metadata"]["retrieved_slice_ids"]
+    assert routed["evidence_summary"]
+    assert routed["evidence_trace"]
+    assert routed["evidence_trace"][0]["reason_summary"]
 
     questions = [
         {
@@ -151,5 +154,7 @@ def test_reroute_question_slices_and_report_signals_capture_round_metadata():
     assert set(report_signals["retrieved_slice_ids"]) == {11, 12, 15}
     assert "quantify degradation strategy" in report_signals["training_priorities"]
     assert any(item["role"] == "technical_deep_dive" for item in report_signals["panel_summary"])
+    assert report_signals["evidence_summary"]
+    assert merged_report["evidence_summary"] == report_signals["evidence_summary"]
     assert merged_report["common_gaps"] == report_signals["common_gaps"]
     assert merged_report["panel_summary"] == report_signals["panel_summary"]

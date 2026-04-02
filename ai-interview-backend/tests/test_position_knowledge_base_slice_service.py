@@ -83,3 +83,6 @@ def test_rank_slices_prefers_stage_role_and_scene_matches():
 
     assert ranked
     assert ranked[0]["slice_id"] == 1
+    assert ranked[0]["routing_score"] > 0
+    assert ranked[0]["routing_reasons"]
+    assert any("匹配阶段" in item for item in ranked[0]["routing_reasons"])

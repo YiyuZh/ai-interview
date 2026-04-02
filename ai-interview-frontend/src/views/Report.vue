@@ -48,6 +48,17 @@
         </ul>
       </div>
 
+      <div v-if="report.evidence_summary?.length" class="card section-card">
+        <h3>训练依据</h3>
+        <ul class="panel-list">
+          <li v-for="(item, i) in report.evidence_summary" :key="`evidence-${i}`">{{ formatInsightItem(item) }}</li>
+        </ul>
+        <p v-if="report.evidence_stats" class="panel-mode-label">
+          已覆盖 {{ report.evidence_stats.questions_with_evidence || 0 }}/{{ report.evidence_stats.total_questions || data.total_questions || 0 }} 题，
+          共命中 {{ report.evidence_stats.retrieved_slice_count || 0 }} 条关键切片。
+        </p>
+      </div>
+
       <div class="two-col section-card">
         <div v-if="report.strengths?.length" class="card">
           <h3 class="good-title">优势</h3>

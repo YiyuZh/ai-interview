@@ -137,3 +137,14 @@ def test_normalize_panel_evaluation_payload_keeps_single_moderator_output():
     assert normalized["feedback"] == "Good depth, but quantify the trade-offs more clearly."
     assert normalized["moderator"]["selected_followups"] == ["How did you estimate capacity?"]
     assert normalized["metadata"]["retrieved_slice_ids"] == [21]
+
+
+@pytest.mark.unit
+def test_grounding_rules_require_conservative_output_without_evidence():
+    rules = AIService._build_grounding_rules("evaluation", has_routed_evidence=False)
+
+    assert "did not provide enough evidence/details" in rules
+    assert "Do not invent candidate experience" in rules
+
+    report_rules = AIService._build_grounding_rules("report", has_report_evidence=False)
+    assert "insufficient evidence" in report_rules

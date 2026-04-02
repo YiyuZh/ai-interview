@@ -33,6 +33,8 @@ class AnswerResponse(BaseSchema):
     next_question: Optional[str] = None
     question_index: int
     is_finished: bool
+    evidence_summary: Optional[list[str]] = None
+    used_slice_ids: Optional[list[int]] = None
 
 
 class QuestionScore(BaseSchema):
@@ -45,6 +47,7 @@ class InterviewReport(BaseSchema):
     interview_id: int
     overall_score: float
     total_questions: int
+    interview_mode: Optional[str] = None
     report: Dict[str, Any]
 
 

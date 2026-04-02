@@ -233,7 +233,58 @@ class InterviewService:
             "skill_tags": item.get("skill_tags") or [],
             "scene_tags": item.get("scene_tags") or [],
             "keywords": item.get("keywords") or [],
+            "routing_score": item.get("routing_score"),
+            "routing_reasons": item.get("routing_reasons") or [],
         }
+
+    @staticmethod
+    def _slice_label(item: Dict) -> str:
+        title = str(item.get("title") or "").strip()
+        if title:
+            return title
+        slice_id = item.get("slice_id")
+        if slice_id:
+            return f"切片 #{slice_id}"
+        return "知识切片"
+
+    @staticmethod
+    def _build_evidence_trace(selected_slices: Sequence[Dict], used_slice_ids: Optional[Sequence[int]] = None) -> List[Dict]:
+        selected_ids = set()
+        for value in used_slice_ids or []:
+            try:
+                selected_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+
+        trace = []
+        for item in selected_slices or []:
+            try:
+                slice_id = int(item.get("slice_id"))
+            except (TypeError, ValueError):
+                slice_id = None
+            reasons = [str(reason).strip() for reason in (item.get("routing_reasons") or []) if str(reason).strip()]
+            trace.append(
+                {
+                    "slice_id": slice_id,
+                    "title": InterviewService._slice_label(item),
+                    "source_section": item.get("source_section") or item.get("slice_type"),
+                    "reason_summary": "；".join(reasons[:3]),
+                    "reasons": reasons[:4],
+                    "quote": str(item.get("content") or "").strip()[:120],
+                    "is_selected": bool(slice_id and slice_id in selected_ids) if selected_ids else True,
+                }
+            )
+        return trace
+
+    @staticmethod
+    def _build_evidence_summary(selected_slices: Sequence[Dict], used_slice_ids: Optional[Sequence[int]] = None) -> List[str]:
+        trace = InterviewService._build_evidence_trace(selected_slices, used_slice_ids=used_slice_ids)
+        summary = []
+        for item in trace[:3]:
+            label = item.get("title") or "知识切片"
+            reason = item.get("reason_summary") or "已命中相关岗位证据"
+            summary.append(f"{label}：{reason}")
+        return summary
 
     @staticmethod
     def _resume_route_text(parsed_resume: Dict) -> str:
@@ -371,6 +422,14 @@ class InterviewService:
                     "evaluation_focus": evaluation_focus,
                     "selected_slices": selected_slices,
                     "used_slice_ids": requested_ids or [],
+                    "evidence_trace": InterviewService._build_evidence_trace(
+                        selected_slices,
+                        used_slice_ids=requested_ids or [],
+                    ),
+                    "evidence_summary": InterviewService._build_evidence_summary(
+                        selected_slices,
+                        used_slice_ids=requested_ids or [],
+                    ),
                     "selected_followups": raw.get("selected_followups") or [],
                     "difficulty_hint": raw.get("difficulty_hint"),
                     "panel_context": raw.get("panel_context") or {},
@@ -421,6 +480,8 @@ class InterviewService:
                     "evaluation_focus": question.get("evaluation_focus") or [],
                     "selected_slices": question.get("selected_slices") or [],
                     "used_slice_ids": question.get("used_slice_ids") or [],
+                    "evidence_trace": question.get("evidence_trace") or [],
+                    "evidence_summary": question.get("evidence_summary") or [],
                     "selected_followups": question.get("selected_followups") or [],
                     "panel_context": question.get("panel_context") or {},
                     "evaluation": question.get("evaluation") or {},
@@ -597,6 +658,14 @@ class InterviewService:
         next_meta["used_slice_ids"] = [
             item.get("slice_id") for item in next_meta["selected_slices"] if item.get("slice_id")
         ]
+        next_meta["evidence_trace"] = InterviewService._build_evidence_trace(
+            next_meta["selected_slices"],
+            used_slice_ids=next_meta["used_slice_ids"],
+        )
+        next_meta["evidence_summary"] = InterviewService._build_evidence_summary(
+            next_meta["selected_slices"],
+            used_slice_ids=next_meta["used_slice_ids"],
+        )
         panel_context = dict(next_meta.get("panel_context") or {})
         metadata = dict(panel_context.get("metadata") or {})
         metadata["retrieved_slice_ids"] = next_meta["used_slice_ids"]
@@ -612,6 +681,8 @@ class InterviewService:
         slice_ids: List[int] = []
         training_priorities: List[str] = []
         panel_notes: Dict[str, List[str]] = {}
+        evidence_summary: List[str] = []
+        evidence_question_count = 0
 
         for question in questions:
             evaluation = question.get("evaluation") or {}
@@ -634,6 +705,16 @@ class InterviewService:
                     continue
                 if slice_id not in slice_ids:
                     slice_ids.append(slice_id)
+
+            question_evidence_summary = InterviewService._unique_strings(
+                question.get("evidence_summary") or [],
+                limit=3,
+            )
+            if question_evidence_summary:
+                evidence_question_count += 1
+                for item in question_evidence_summary:
+                    if item not in evidence_summary:
+                        evidence_summary.append(item)
 
             for item in evaluation.get("panel_views") or []:
                 if not isinstance(item, dict):
@@ -662,6 +743,12 @@ class InterviewService:
             ),
             "panel_summary": panel_summary,
             "retrieved_slice_ids": slice_ids,
+            "evidence_summary": evidence_summary[:6],
+            "evidence_stats": {
+                "questions_with_evidence": evidence_question_count,
+                "total_questions": len(questions),
+                "retrieved_slice_count": len(slice_ids),
+            },
         }
 
     @staticmethod
@@ -681,6 +768,10 @@ class InterviewService:
             merged["common_gaps"] = report_signals["common_gaps"]
         if interview_mode == "panel" and not merged.get("panel_summary") and report_signals.get("panel_summary"):
             merged["panel_summary"] = report_signals["panel_summary"]
+        if not merged.get("evidence_summary") and report_signals.get("evidence_summary"):
+            merged["evidence_summary"] = report_signals["evidence_summary"]
+        if not merged.get("evidence_stats") and report_signals.get("evidence_stats"):
+            merged["evidence_stats"] = report_signals["evidence_stats"]
         return merged
 
     @staticmethod
@@ -1001,6 +1092,14 @@ class InterviewService:
             or current_question_meta.get("used_slice_ids")
             or InterviewService._question_slice_ids(current_question_meta)
         )
+        current_question_meta["evidence_trace"] = InterviewService._build_evidence_trace(
+            current_question_meta.get("selected_slices") or [],
+            used_slice_ids=current_question_meta.get("used_slice_ids") or [],
+        )
+        current_question_meta["evidence_summary"] = InterviewService._build_evidence_summary(
+            current_question_meta.get("selected_slices") or [],
+            used_slice_ids=current_question_meta.get("used_slice_ids") or [],
+        )
         current_question_meta["selected_followups"] = (
             (evaluation.get("moderator") or {}).get("selected_followups")
             or evaluation.get("selected_followups")
@@ -1026,6 +1125,8 @@ class InterviewService:
             "question_index": current_index,
             "is_finished": is_finished,
             "next_question": None,
+            "evidence_summary": current_question_meta.get("evidence_summary") or [],
+            "used_slice_ids": current_question_meta.get("used_slice_ids") or [],
         }
 
         if is_finished:
