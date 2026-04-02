@@ -184,6 +184,7 @@ class ProfileUpdate(BaseModel):
 
 class AIConnectionTestRequest(BaseModel):
     provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 @router.put("/me")
@@ -291,6 +292,8 @@ async def test_ai_connection(
         require_personal_key=True,
         provider=data.provider,
     )
+    if data.model is not None and data.model.strip():
+        runtime_config["model"] = data.model.strip()
     result = await AIService.test_runtime_connection(runtime_config)
     return ApiResponse.success(data=result)
 

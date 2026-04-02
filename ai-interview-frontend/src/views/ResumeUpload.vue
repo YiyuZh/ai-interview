@@ -17,6 +17,55 @@
           <label>目标岗位</label>
           <input v-model="targetPosition" placeholder="例如：Python后端开发工程师" />
         </div>
+        <div class="card api-test-card" style="margin-bottom:16px">
+          <div class="api-test-head">
+            <div>
+              <h3 style="margin-bottom:8px">AI 连接测试</h3>
+              <p class="api-test-desc">
+                开始解析前，你可以先测试当前账号的 AI API 是否可用。这里支持切换服务商和模型做连通性验证，但不会修改个人中心里已保存的默认配置。
+              </p>
+            </div>
+          </div>
+          <div class="form-row compact-form-row">
+            <div class="form-group">
+              <label>服务商</label>
+              <select v-model="aiTestProvider" @change="handleAiProviderChange">
+                <option v-for="option in aiProviderOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>测试模型</label>
+              <input
+                v-model="aiTestModel"
+                :placeholder="aiTestModelPlaceholder"
+                :list="aiModelDatalistId"
+              />
+              <datalist :id="aiModelDatalistId">
+                <option
+                  v-for="option in activeAiModelOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </datalist>
+            </div>
+          </div>
+          <div class="api-test-actions">
+            <button
+              class="btn-secondary"
+              @click="handleTestAiConnection"
+              :disabled="testingAiConnection || uploading || starting"
+            >
+              {{ testingAiConnection ? '测试中...' : `测试 ${activeAiProviderLabel} 连接` }}
+            </button>
+            <p v-if="aiTestMessage" :class="aiTestSuccess ? 'success-msg inline-msg' : 'error inline-msg'">
+              {{ aiTestMessage }}
+            </p>
+          </div>
+        </div>
         <p v-if="error" class="error">{{ error }}</p>
         <button class="btn-primary" style="width:100%" @click="handleUpload" :disabled="!file || uploading">
           {{ uploading ? '上传中...' : '上传并解析简历' }}
@@ -213,12 +262,12 @@
 </template>
 
 <script setup>
-import { computed, ref, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { uploadResume, getResume } from '../api/resume'
 import { startInterview } from '../api/interview'
 import { getKnowledgeBases } from '../api/knowledgeBase'
-import { getProfile } from '../api/user'
+import { getProfile, testAiConnection } from '../api/user'
 
 const router = useRouter()
 const step = ref(1)
@@ -237,6 +286,44 @@ const knowledgeLoading = ref(false)
 const knowledgeBases = ref([])
 const selectedKnowledgeBaseId = ref('')
 const panelRoleHints = ['技术深挖', '项目追问', '业务场景', '表达结构', '压力质询']
+
+const aiProviderOptions = [
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'openai', label: 'ChatGPT / OpenAI' }
+]
+const aiProviderLabels = {
+  deepseek: 'DeepSeek',
+  openai: 'ChatGPT / OpenAI'
+}
+const aiProviderDefaults = {
+  deepseek: { model: 'deepseek-chat' },
+  openai: { model: 'gpt-5.2-chat-latest' }
+}
+const aiProviderModelOptions = {
+  deepseek: [
+    { value: 'deepseek-chat', label: 'deepseek-chat' },
+    { value: 'deepseek-reasoner', label: 'deepseek-reasoner' }
+  ],
+  openai: [
+    { value: 'gpt-5.2-chat-latest', label: 'gpt-5.2-chat-latest' },
+    { value: 'gpt-5.2', label: 'gpt-5.2' },
+    { value: 'gpt-5-mini', label: 'gpt-5-mini' }
+  ]
+}
+const aiModelDatalistId = 'resume-upload-ai-model-options'
+const aiTestProvider = ref('deepseek')
+const aiTestModel = ref('')
+const aiSavedModels = ref({
+  deepseek: '',
+  openai: ''
+})
+const testingAiConnection = ref(false)
+const aiTestMessage = ref('')
+const aiTestSuccess = ref(false)
+
+const activeAiProviderLabel = computed(() => aiProviderLabels[aiTestProvider.value] || 'AI')
+const activeAiModelOptions = computed(() => aiProviderModelOptions[aiTestProvider.value] || [])
+const aiTestModelPlaceholder = computed(() => aiProviderDefaults[aiTestProvider.value]?.model || '')
 
 const selectedKnowledgeBase = computed(() => {
   const id = Number(selectedKnowledgeBaseId.value)
@@ -279,6 +366,23 @@ const tips = [
   '面试结束后及时复盘，记录不足之处'
 ]
 
+const resumeStatusMeta = {
+  queued: { progress: 12, title: '简历已上传，正在进入解析队列...' },
+  extracting: { progress: 32, title: '正在提取 PDF 文本内容...' },
+  parsing: { progress: 58, title: 'AI 正在结构化解析简历...' },
+  analyzing: { progress: 82, title: 'AI 正在生成简历分析报告...' },
+  completed: { progress: 100, title: '解析完成，正在准备结果...' }
+}
+
+function syncParsingStage(status) {
+  const meta = resumeStatusMeta[status]
+  if (!meta) return
+  if (progress.value < meta.progress) {
+    progress.value = meta.progress
+  }
+  parsingTitle.value = meta.title
+}
+
 function startTipRotation() {
   currentTip.value = tips[Math.floor(Math.random() * tips.length)]
   tipTimer = setInterval(() => {
@@ -318,6 +422,30 @@ function stopAnimations() {
   if (tipTimer) { clearInterval(tipTimer); tipTimer = null }
   if (progressTimer) { clearTimeout(progressTimer); progressTimer = null }
 }
+
+function applyAiProfile(data) {
+  aiSavedModels.value = {
+    deepseek: data?.deepseek_model || '',
+    openai: data?.openai_model || ''
+  }
+  aiTestProvider.value = data?.ai_provider || 'deepseek'
+  aiTestModel.value = aiSavedModels.value[aiTestProvider.value] || aiProviderDefaults[aiTestProvider.value]?.model || ''
+}
+
+function handleAiProviderChange() {
+  aiTestMessage.value = ''
+  aiTestSuccess.value = false
+  aiTestModel.value = aiSavedModels.value[aiTestProvider.value] || aiProviderDefaults[aiTestProvider.value]?.model || ''
+}
+
+onMounted(async () => {
+  try {
+    const data = await getProfile()
+    applyAiProfile(data)
+  } catch (e) {
+    console.error('鍔犺浇 AI 閰嶇疆澶辫触', e)
+  }
+})
 
 onUnmounted(() => {
   stopAnimations()
@@ -389,6 +517,24 @@ async function loadKnowledgeBases() {
   }
 }
 
+async function handleTestAiConnection() {
+  aiTestMessage.value = ''
+  aiTestSuccess.value = false
+  testingAiConnection.value = true
+  try {
+    const result = await testAiConnection({
+      provider: aiTestProvider.value,
+      model: aiTestModel.value?.trim() || undefined
+    })
+    aiTestSuccess.value = true
+    aiTestMessage.value = result?.message || `${activeAiProviderLabel.value} API 连接测试成功`
+  } catch (e) {
+    aiTestMessage.value = e.message
+  } finally {
+    testingAiConnection.value = false
+  }
+}
+
 async function handleUpload() {
   error.value = ''
   uploading.value = true
@@ -405,9 +551,10 @@ async function handleUpload() {
 
     // 轮询等待解析完成
     let retries = 0
-    while (retries < 90) {
-      await new Promise(r => setTimeout(r, 2000))
+    while (retries < 180) {
+      await new Promise(r => setTimeout(r, 3000))
       const detail = await getResume(resumeId.value)
+      syncParsingStage(detail.status)
       if (detail.status === 'completed') {
         parsedContent.value = detail.parsed_content
         analysis.value = detail.analysis
@@ -425,7 +572,7 @@ async function handleUpload() {
       }
       retries++
     }
-    throw new Error('简历解析超时，请稍后在上传记录中查看结果或重新尝试')
+    throw new Error('简历仍在后台解析中，请稍后到上传记录查看结果，无需重新上传')
   } catch (e) {
     stopAnimations()
     error.value = e.message
@@ -548,6 +695,14 @@ async function handleStart() {
 <style scoped>
 .form-group { margin-bottom: 16px; }
 .form-group label { display: block; margin-bottom: 6px; font-size: 14px; font-weight: 500; color: #374151; }
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.compact-form-row {
+  margin-bottom: 4px;
+}
 .upload-area {
   border: 2px dashed #d1d5db; border-radius: 8px; padding: 40px;
   text-align: center; cursor: pointer; transition: border-color 0.2s;
@@ -555,6 +710,26 @@ async function handleStart() {
 .upload-area:hover { border-color: #4f46e5; }
 .error { color: #ef4444; font-size: 13px; margin-bottom: 12px; }
 .parsed-info p { font-size: 14px; margin-bottom: 6px; line-height: 1.6; }
+.api-test-card {
+  border: 1px solid #e5e7eb;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+.api-test-head {
+  margin-bottom: 12px;
+}
+.api-test-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #6b7280;
+}
+.api-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.inline-msg {
+  margin: 0;
+}
 
 /* 解析动画 */
 .parsing-stage { text-align: center; padding: 30px 0; }
@@ -743,6 +918,15 @@ async function handleStart() {
   font-size: 13px;
   line-height: 1.7;
   color: #4b5563;
+}
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+  .api-test-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>
 

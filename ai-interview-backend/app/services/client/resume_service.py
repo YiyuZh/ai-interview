@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import async_session
 from app.exceptions.http_exceptions import NotFoundError, ValidationError
 from app.models.resume import Resume
+from app.models.user import User
 from app.services.client.ai_service import AIService
+from app.services.common.deepseek_config_service import deepseek_config_service
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +31,12 @@ class ResumeService:
         file_name: str,
         target_position: str,
     ) -> Dict:
-        """保存上传的简历文件，并立即创建解析记录。"""
         safe_name = Path(file_name or "resume.pdf").name or "resume.pdf"
         file_path = os.path.join(UPLOAD_DIR, f"{user_id}_{uuid4().hex}_{safe_name}")
 
         try:
-            with open(file_path, "wb") as f:
-                f.write(file_content)
+            with open(file_path, "wb") as file_obj:
+                file_obj.write(file_content)
         except OSError as exc:
             logger.exception("Save resume file failed: %s", exc)
             raise ValidationError(message="简历文件保存失败，请稍后重试") from exc
@@ -45,7 +46,7 @@ class ResumeService:
             file_url=file_path,
             file_name=safe_name,
             target_position=target_position,
-            status="parsing",
+            status="queued",
         )
         db.add(resume)
         await db.commit()
@@ -54,7 +55,7 @@ class ResumeService:
         return {
             "resume_id": resume.id,
             "status": resume.status,
-            "message": "简历上传成功，正在解析",
+            "message": "简历上传成功，已进入解析队列",
         }
 
     @staticmethod
@@ -62,12 +63,11 @@ class ResumeService:
         resume_id: int,
         ai_config: Optional[Dict] = None,
     ) -> None:
-        """在后台异步解析简历，避免上传接口长时间阻塞。"""
         async with async_session() as db:
             result = await db.execute(select(Resume).where(Resume.id == resume_id))
             resume = result.scalar_one_or_none()
             if not resume:
-                logger.warning("Resume %s not found for background processing", resume_id)
+                logger.warning("Resume %s not found for async processing", resume_id)
                 return
 
             await ResumeService._process_resume_record(db, resume, ai_config=ai_config)
@@ -78,6 +78,24 @@ class ResumeService:
         resume: Resume,
         ai_config: Optional[Dict] = None,
     ) -> None:
+        if ai_config is None:
+            try:
+                ai_config = await ResumeService._build_runtime_config(db, resume)
+            except ValidationError as exc:
+                await ResumeService._mark_resume_failed(db, resume, exc.detail)
+                return
+            except Exception as exc:
+                logger.exception(
+                    "Build runtime config failed for resume %s: %s", resume.id, exc
+                )
+                await ResumeService._mark_resume_failed(
+                    db,
+                    resume,
+                    "无法读取当前账号的 AI 配置，请先在个人中心确认 API 设置后重试",
+                )
+                return
+
+        await ResumeService._update_status(db, resume, "extracting")
         try:
             resume_text = ResumeService._extract_pdf_text(resume.file_url or "")
             if not resume_text.strip():
@@ -90,10 +108,34 @@ class ResumeService:
             await ResumeService._mark_resume_failed(db, resume, f"PDF 解析失败: {str(exc)}")
             return
 
+        await ResumeService._update_status(db, resume, "parsing")
         try:
             parsed = await AIService.parse_resume(resume_text, ai_config=ai_config)
             resume.parsed_content = json.dumps(parsed, ensure_ascii=False)
+            await db.commit()
+            await db.refresh(resume)
+        except ValidationError as exc:
+            await ResumeService._mark_resume_failed(db, resume, exc.detail)
+            return
+        except JSONDecodeError as exc:
+            logger.exception("Resume parse JSON decode failed for resume %s: %s", resume.id, exc)
+            await ResumeService._mark_resume_failed(
+                db,
+                resume,
+                "AI 返回的简历解析结果格式异常，请稍后重试或更换模型",
+            )
+            return
+        except Exception as exc:
+            logger.exception("Resume parse failed for resume %s: %s", resume.id, exc)
+            await ResumeService._mark_resume_failed(
+                db,
+                resume,
+                "简历结构化解析失败，请稍后重试",
+            )
+            return
 
+        await ResumeService._update_status(db, resume, "analyzing")
+        try:
             analysis = await AIService.analyze_resume(
                 parsed,
                 resume.target_position or "",
@@ -106,19 +148,35 @@ class ResumeService:
         except ValidationError as exc:
             await ResumeService._mark_resume_failed(db, resume, exc.detail)
         except JSONDecodeError as exc:
-            logger.exception("Resume AI JSON parse failed for resume %s: %s", resume.id, exc)
+            logger.exception("Resume analysis JSON decode failed for resume %s: %s", resume.id, exc)
             await ResumeService._mark_resume_failed(
                 db,
                 resume,
-                "AI 返回格式异常，请稍后重试或更换模型",
+                "AI 返回的简历分析结果格式异常，请稍后重试或更换模型",
             )
         except Exception as exc:
-            logger.exception("Resume AI processing failed for resume %s: %s", resume.id, exc)
+            logger.exception("Resume analysis failed for resume %s: %s", resume.id, exc)
             await ResumeService._mark_resume_failed(
                 db,
                 resume,
-                "简历解析服务异常，请稍后重试",
+                "简历分析服务异常，请稍后重试",
             )
+
+    @staticmethod
+    async def _build_runtime_config(db: AsyncSession, resume: Resume) -> Dict:
+        user = await db.get(User, resume.user_id)
+        if not user:
+            raise ValidationError(message="上传简历的用户不存在")
+        return deepseek_config_service.build_runtime_config(
+            user,
+            require_personal_key=True,
+        )
+
+    @staticmethod
+    async def _update_status(db: AsyncSession, resume: Resume, status: str) -> None:
+        resume.status = status
+        await db.commit()
+        await db.refresh(resume)
 
     @staticmethod
     async def _mark_resume_failed(
@@ -129,10 +187,10 @@ class ResumeService:
         resume.status = "failed"
         resume.analysis = json.dumps({"error_message": error_message}, ensure_ascii=False)
         await db.commit()
+        await db.refresh(resume)
 
     @staticmethod
     def _extract_pdf_text(file_path: str) -> str:
-        """从 PDF 文件中提取文本内容。"""
         import pdfplumber
 
         text = ""
@@ -145,7 +203,6 @@ class ResumeService:
 
     @staticmethod
     async def get_resume(db: AsyncSession, resume_id: int, user_id: int) -> Dict:
-        """根据 ID 获取简历详情。"""
         query = select(Resume).where(
             Resume.id == resume_id,
             Resume.user_id == user_id,
@@ -186,22 +243,19 @@ class ResumeService:
 
     @staticmethod
     async def get_user_resumes(db: AsyncSession, user_id: int) -> list:
-        """获取用户的所有简历列表。"""
-        query = select(Resume).where(
-            Resume.user_id == user_id
-        ).order_by(Resume.created_at.desc())
+        query = select(Resume).where(Resume.user_id == user_id).order_by(Resume.created_at.desc())
         result = await db.execute(query)
         resumes = result.scalars().all()
 
         return [
             {
-                "resume_id": r.id,
-                "file_name": r.file_name,
-                "target_position": r.target_position,
-                "status": r.status,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "resume_id": item.id,
+                "file_name": item.file_name,
+                "target_position": item.target_position,
+                "status": item.status,
+                "created_at": item.created_at.isoformat() if item.created_at else None,
             }
-            for r in resumes
+            for item in resumes
         ]
 
 

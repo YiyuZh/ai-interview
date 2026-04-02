@@ -6,10 +6,22 @@ from app.db.session import get_db
 from app.exceptions.http_exceptions import ValidationError
 from app.models.user import User
 from app.schemas.response import ApiResponse
+from app.core.celery_app import celery_app
 from app.services.client.resume_service import resume_service
 from app.services.common.deepseek_config_service import deepseek_config_service
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _has_available_resume_worker() -> bool:
+    try:
+        responses = celery_app.control.ping(timeout=1.0)
+        return bool(responses)
+    except Exception as exc:
+        logger.warning("Resume worker ping failed, fallback to background task: %s", exc)
+        return False
 
 
 @router.post("/upload")
@@ -39,11 +51,24 @@ async def upload_resume(
         file_name=file.filename,
         target_position=target_position,
     )
-    background_tasks.add_task(
-        resume_service.process_resume,
-        result["resume_id"],
-        ai_config,
-    )
+    if _has_available_resume_worker():
+        try:
+            from app.schedule.jobs.resume_tasks import process_resume_task
+
+            process_resume_task.delay(result["resume_id"])
+        except Exception as exc:
+            logger.exception("Dispatch resume task failed, fallback to background task: %s", exc)
+            background_tasks.add_task(
+                resume_service.process_resume,
+                result["resume_id"],
+                ai_config,
+            )
+    else:
+        background_tasks.add_task(
+            resume_service.process_resume,
+            result["resume_id"],
+            ai_config,
+        )
     return ApiResponse.success(data=result)
 
 

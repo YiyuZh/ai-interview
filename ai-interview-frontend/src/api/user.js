@@ -8,8 +8,11 @@ export function updateProfile(data) {
   return api.put('/auth/me', data)
 }
 
-export function testAiConnection(provider) {
-  return api.post('/auth/me/ai-connection-test', { provider })
+export function testAiConnection(payloadOrProvider) {
+  const payload = typeof payloadOrProvider === 'string'
+    ? { provider: payloadOrProvider }
+    : (payloadOrProvider || {})
+  return api.post('/auth/me/ai-connection-test', payload)
 }
 
 export function uploadAvatar(file) {
