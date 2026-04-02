@@ -14,6 +14,18 @@
           <p class="avatar-name">{{ displayName }}</p>
           <p class="avatar-email">{{ profile.email }}</p>
         </div>
+        <div class="provider-actions" style="margin-top: 12px">
+          <button
+            class="btn-secondary"
+            @click="handleTestAiConnection"
+            :disabled="saving || testingAiConnection"
+          >
+            {{ testingAiConnection ? '娴嬭瘯涓?..' : `娴嬭瘯褰撳墠 ${activeProviderLabel} 杩炴帴` }}
+          </button>
+          <p v-if="testAiMessage" :class="testAiSuccess ? 'success-msg' : 'error'">
+            {{ testAiMessage }}
+          </p>
+        </div>
       </div>
 
       <div class="card" style="margin-top: 16px">
@@ -171,7 +183,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { useAuthStore } from '../stores/auth'
-import { changePassword, getProfile, updateProfile, uploadAvatar } from '../api/user'
+import { changePassword, getProfile, testAiConnection, updateProfile, uploadAvatar } from '../api/user'
 
 const authStore = useAuthStore()
 
@@ -238,6 +250,9 @@ const saving = ref(false)
 const changingPw = ref(false)
 const profileMsg = ref('')
 const pwMsg = ref('')
+const testingAiConnection = ref(false)
+const testAiMessage = ref('')
+const testAiSuccess = ref(false)
 
 const avatarUrl = computed(() => {
   if (!profile.value.avatar) return ''
@@ -359,6 +374,7 @@ function handleClearSavedKey() {
 
 async function handleSaveProfile() {
   profileMsg.value = ''
+  testAiMessage.value = ''
   saving.value = true
   try {
     const payload = {
@@ -396,6 +412,21 @@ async function handleSaveProfile() {
     profileMsg.value = error.message
   } finally {
     saving.value = false
+  }
+}
+
+async function handleTestAiConnection() {
+  testAiMessage.value = ''
+  testAiSuccess.value = false
+  testingAiConnection.value = true
+  try {
+    const result = await testAiConnection(activeProvider.value)
+    testAiSuccess.value = true
+    testAiMessage.value = result?.message || `${activeProviderLabel.value} 杩炴帴娴嬭瘯鎴愬姛`
+  } catch (error) {
+    testAiMessage.value = error.message
+  } finally {
+    testingAiConnection.value = false
   }
 }
 

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     API_PORT: int = 8001
     FRONTEND_URL: str = "http://localhost:3000"
     BACKEND_CORS_ORIGINS: str = ""
-    UVICORN_WORKERS: int = 1
+    UVICORN_WORKERS: int = 4
 
     # Optional docker/dev ports
     REDIS_EXTERNAL_PORT: int = 6386

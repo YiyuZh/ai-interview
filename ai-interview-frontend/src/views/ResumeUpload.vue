@@ -218,6 +218,7 @@ import { useRouter } from 'vue-router'
 import { uploadResume, getResume } from '../api/resume'
 import { startInterview } from '../api/interview'
 import { getKnowledgeBases } from '../api/knowledgeBase'
+import { getProfile } from '../api/user'
 
 const router = useRouter()
 const step = ref(1)
@@ -392,6 +393,8 @@ async function handleUpload() {
   error.value = ''
   uploading.value = true
   try {
+    await getProfile()
+
     // 切换到解析动画
     step.value = 'parsing'
     startTipRotation()

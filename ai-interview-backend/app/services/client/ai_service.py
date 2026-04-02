@@ -63,6 +63,40 @@ DEFAULT_PANEL_ROLES = [
 
 class AIService:
     @staticmethod
+    async def test_runtime_connection(ai_config: Optional[Dict] = None) -> Dict[str, Any]:
+        client, model, source, provider_label = AIService._resolve_runtime(ai_config)
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "Reply with OK only."},
+                    {"role": "user", "content": "Connectivity check."},
+                ],
+                temperature=0,
+                max_tokens=8,
+            )
+            content = (response.choices[0].message.content or "").strip()
+            return {
+                "provider": ai_config.get("provider") if ai_config else None,
+                "provider_label": provider_label,
+                "model": model,
+                "base_url": ai_config.get("base_url") if ai_config else None,
+                "source": source,
+                "message": f"{provider_label} API 杩炴帴娴嬭瘯鎴愬姛",
+                "response_preview": content[:32],
+            }
+        except Exception as exc:
+            logger.exception("AI provider connectivity test failed (%s): %s", source, exc)
+            translated = AIService._translate_runtime_error(
+                exc,
+                source=source,
+                provider_label=provider_label,
+            )
+            if translated is exc:
+                raise
+            raise translated from exc
+
+    @staticmethod
     def _resolve_runtime(ai_config: Optional[Dict] = None):
         if ai_config and ai_config.get("api_key"):
             provider = (ai_config.get("provider") or "deepseek").strip().lower()

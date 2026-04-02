@@ -8,6 +8,10 @@ export function updateProfile(data) {
   return api.put('/auth/me', data)
 }
 
+export function testAiConnection(provider) {
+  return api.post('/auth/me/ai-connection-test', { provider })
+}
+
 export function uploadAvatar(file) {
   const formData = new FormData()
   formData.append('file', file)

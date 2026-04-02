@@ -26,6 +26,7 @@ from app.schemas.client.auth import (
 )
 from app.schemas.client.user import UserProfile
 from app.schemas.response import ApiResponse
+from app.services.client.ai_service import AIService
 from app.services.client.auth import client_auth_service
 from app.services.common.deepseek_config_service import deepseek_config_service
 
@@ -182,6 +183,10 @@ class ProfileUpdate(BaseModel):
     openai_model: Optional[str] = None
 
 
+class AIConnectionTestRequest(BaseModel):
+    provider: Optional[str] = None
+
+
 @router.put("/me")
 async def update_profile(
     data: ProfileUpdate,
@@ -273,6 +278,20 @@ async def update_profile(
             **deepseek_config_service.summarize_for_profile(current_user),
         }
     )
+
+
+@router.post("/me/ai-connection-test")
+async def test_ai_connection(
+    data: AIConnectionTestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    runtime_config = deepseek_config_service.build_runtime_config(
+        current_user,
+        require_personal_key=True,
+        provider=data.provider,
+    )
+    result = await AIService.test_runtime_connection(runtime_config)
+    return ApiResponse.success(data=result)
 
 
 AVATAR_DIR = "uploads/avatars"

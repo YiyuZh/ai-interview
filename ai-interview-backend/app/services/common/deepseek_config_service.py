@@ -103,13 +103,16 @@ class DeepSeekConfigService:
     def build_runtime_config(
         user: Optional[User],
         require_personal_key: bool = False,
+        provider: Optional[str] = None,
     ) -> Optional[Dict]:
         if not user:
             if require_personal_key:
                 raise ValidationError(message="请先登录后再使用 AI 功能")
             return None
 
-        provider = DeepSeekConfigService.normalize_provider(getattr(user, "ai_provider", None))
+        provider = DeepSeekConfigService.normalize_provider(
+            provider or getattr(user, "ai_provider", None)
+        )
         field_names = DeepSeekConfigService._provider_field_names(provider)
         provider_label = DeepSeekConfigService.provider_label(provider)
         encrypted_key = getattr(user, field_names["key"], None)

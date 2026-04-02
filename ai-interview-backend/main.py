@@ -15,6 +15,6 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=settings.API_PORT,
         reload=settings.ENV == "development",  # Enable hot reload in development environment
-        workers=1,  # Keep single worker to stabilize upload requests in production
+        workers=1 if settings.ENV == "development" else 4,  # Multi-process for production environment
         env_file=".env"  # Use environment variable file
     )

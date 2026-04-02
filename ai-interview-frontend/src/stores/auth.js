@@ -45,6 +45,15 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('userAvatar', userAvatar.value)
   }
 
+  function setAccessToken(accessToken) {
+    token.value = accessToken || ''
+    if (token.value) {
+      localStorage.setItem('token', token.value)
+    } else {
+      localStorage.removeItem('token')
+    }
+  }
+
   function logout() {
     token.value = ''
     refreshToken.value = ''
@@ -60,5 +69,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('userAvatar')
   }
 
-  return { token, refreshToken, userEmail, userId, userName, userAvatar, isLoggedIn, setAuth, setUserInfo, logout }
+  return { token, refreshToken, userEmail, userId, userName, userAvatar, isLoggedIn, setAuth, setUserInfo, setAccessToken, logout }
 })
