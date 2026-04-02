@@ -153,7 +153,6 @@ class LogQueueProcessor(threading.Thread):
 
 # 创建并启动日志处理线程
 log_processor = LogQueueProcessor()
-log_processor.start()
 
 # 创建一个多进程安全的文件处理器
 class SafeTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
@@ -269,6 +268,8 @@ def setup_logging():
     if not os.path.exists(LOG_DIR):
         os.makedirs(LOG_DIR)
     dictConfig(LOGGING_CONFIG)
+    if not log_processor.is_alive():
+        log_processor.start()
     
     # 只在主进程中输出初始化日志
     if is_master_process():
@@ -278,7 +279,8 @@ def setup_logging():
 def shutdown_logging():
     """关闭日志处理器，在多进程环境不需要特殊关闭"""
     # 停止日志处理线程
-    log_processor.stop()
+    if log_processor.is_alive():
+        log_processor.stop()
     
     # 只在主进程中输出关闭日志
     if is_master_process():
