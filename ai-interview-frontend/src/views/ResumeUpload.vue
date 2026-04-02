@@ -20,15 +20,15 @@
         <div class="card api-test-card" style="margin-bottom:16px">
           <div class="api-test-head">
             <div>
-              <h3 style="margin-bottom:8px">AI 连接测试</h3>
+              <h3 style="margin-bottom:8px">选择本次 AI</h3>
               <p class="api-test-desc">
-                开始解析前，你可以先测试当前账号的 AI API 是否可用。这里支持切换服务商和模型做连通性验证，但不会修改个人中心里已保存的默认配置。
+                开始解析简历前，先选择这一次要使用的 AI 服务商和模型。你可以先检测连接是否成功，确认无误后再开始解析。
               </p>
             </div>
           </div>
           <div class="form-row compact-form-row">
             <div class="form-group">
-              <label>服务商</label>
+              <label>AI 服务商</label>
               <select v-model="aiTestProvider" @change="handleAiProviderChange">
                 <option v-for="option in aiProviderOptions" :key="option.value" :value="option.value">
                   {{ option.label }}
@@ -36,7 +36,7 @@
               </select>
             </div>
             <div class="form-group">
-              <label>测试模型</label>
+              <label>使用模型</label>
               <input
                 v-model="aiTestModel"
                 :placeholder="aiTestModelPlaceholder"
@@ -59,14 +59,17 @@
               @click="handleTestAiConnection"
               :disabled="testingAiConnection || uploading || starting"
             >
-              {{ testingAiConnection ? '测试中...' : `测试 ${activeAiProviderLabel} 连接` }}
+              {{ testingAiConnection ? '检测中...' : `检测 ${activeAiProviderLabel} 连接` }}
             </button>
             <p v-if="aiTestMessage" :class="aiTestSuccess ? 'success-msg inline-msg' : 'error inline-msg'">
               {{ aiTestMessage }}
             </p>
           </div>
+          <p class="api-test-current-selection">
+            本次解析将使用：{{ activeAiProviderLabel }} / {{ currentAiModelDisplay }}
+          </p>
           <p class="api-test-usage-note">
-            当前这里选中的服务商和模型，会用于这一次简历解析；只是不修改你个人中心里保存的默认配置。
+            当前这里选中的服务商和模型，会用于这一次简历解析；但不会修改你个人中心里保存的默认配置。
           </p>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
@@ -327,6 +330,7 @@ const aiTestSuccess = ref(false)
 const activeAiProviderLabel = computed(() => aiProviderLabels[aiTestProvider.value] || 'AI')
 const activeAiModelOptions = computed(() => aiProviderModelOptions[aiTestProvider.value] || [])
 const aiTestModelPlaceholder = computed(() => aiProviderDefaults[aiTestProvider.value]?.model || '')
+const currentAiModelDisplay = computed(() => aiTestModel.value?.trim() || aiTestModelPlaceholder.value || '未选择模型')
 
 const selectedKnowledgeBase = computed(() => {
   const id = Number(selectedKnowledgeBaseId.value)
@@ -740,6 +744,12 @@ async function handleStart() {
 }
 .inline-msg {
   margin: 0;
+}
+.api-test-current-selection {
+  margin: 12px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
 }
 .api-test-usage-note {
   margin: 10px 0 0;
