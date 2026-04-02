@@ -95,6 +95,13 @@ class ResumeService:
                 )
                 return
 
+        logger.info(
+            "Resume processing started: resume_id=%s provider=%s model=%s",
+            resume.id,
+            (ai_config or {}).get("provider"),
+            (ai_config or {}).get("model"),
+        )
+
         await ResumeService._update_status(db, resume, "extracting")
         try:
             resume_text = ResumeService._extract_pdf_text(resume.file_url or "")

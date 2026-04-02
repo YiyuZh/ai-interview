@@ -65,6 +65,9 @@
               {{ aiTestMessage }}
             </p>
           </div>
+          <p class="api-test-usage-note">
+            当前这里选中的服务商和模型，会用于这一次简历解析；只是不修改你个人中心里保存的默认配置。
+          </p>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
         <button class="btn-primary" style="width:100%" @click="handleUpload" :disabled="!file || uploading">
@@ -546,7 +549,10 @@ async function handleUpload() {
     startTipRotation()
     startProgressAnimation()
 
-    const data = await uploadResume(file.value, targetPosition.value)
+    const data = await uploadResume(file.value, targetPosition.value, {
+      provider: aiTestProvider.value,
+      model: aiTestModel.value?.trim() || ''
+    })
     resumeId.value = data.resume_id
 
     // 轮询等待解析完成
@@ -729,6 +735,12 @@ async function handleStart() {
 }
 .inline-msg {
   margin: 0;
+}
+.api-test-usage-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b7280;
 }
 
 /* 解析动画 */

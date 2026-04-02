@@ -1,9 +1,15 @@
 import api from './request'
 
-export function uploadResume(file, targetPosition) {
+export function uploadResume(file, targetPosition, options = {}) {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('target_position', targetPosition)
+  if (options.provider) {
+    formData.append('ai_provider', options.provider)
+  }
+  if (options.model) {
+    formData.append('ai_model', options.model)
+  }
   return api.post('/resumes/upload', formData, {
     timeout: 120000
   })
