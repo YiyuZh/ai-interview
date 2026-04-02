@@ -1,8 +1,8 @@
+import ast
 import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Sequence
-
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -13,12 +13,9 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-
 from app.core.config import settings
 from app.exceptions.http_exceptions import ValidationError
-
 logger = logging.getLogger(__name__)
-
 PANEL_OUTPUT_VERSION = "panel_structured_v1"
 PANEL_ROLE_ALIAS = {
     "technical_deep_dive": "technical",
@@ -59,8 +56,6 @@ DEFAULT_PANEL_ROLES = [
         "focus": "Test stress handling, risk awareness, and difficult trade-offs.",
     },
 ]
-
-
 class AIService:
     @staticmethod
     async def test_runtime_connection(ai_config: Optional[Dict] = None) -> Dict[str, Any]:
@@ -82,7 +77,7 @@ class AIService:
                 "model": model,
                 "base_url": ai_config.get("base_url") if ai_config else None,
                 "source": source,
-                "message": f"{provider_label} API 杩炴帴娴嬭瘯鎴愬姛",
+                "message": f"{provider_label} API 连接测试成功",
                 "response_preview": content[:32],
             }
         except Exception as exc:
@@ -95,7 +90,6 @@ class AIService:
             if translated is exc:
                 raise
             raise translated from exc
-
     @staticmethod
     def _resolve_runtime(ai_config: Optional[Dict] = None):
         if ai_config and ai_config.get("api_key"):
@@ -116,7 +110,6 @@ class AIService:
                 ai_config.get("provider_label") or ("ChatGPT / OpenAI" if provider == "openai" else "DeepSeek"),
             )
         raise ValidationError(message="请先在个人中心保存可用的 AI API Key")
-
     @staticmethod
     def _translate_runtime_error(
         exc: Exception,
@@ -147,7 +140,6 @@ class AIService:
                 "或稍后再试"
             )
         )
-
     @staticmethod
     async def _chat(
         messages: list,
@@ -173,7 +165,6 @@ class AIService:
             if translated is exc:
                 raise
             raise translated from exc
-
     @staticmethod
     async def _chat_stream(
         messages: list,
@@ -203,21 +194,131 @@ class AIService:
             if translated is exc:
                 raise
             raise translated from exc
-
     @staticmethod
-    def _extract_json(text: str) -> Any:
+    def _strip_code_fence(text: str) -> str:
         payload = (text or "").strip()
         if payload.startswith("```"):
             payload = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", payload)
             payload = re.sub(r"\s*```$", "", payload)
+        return payload.strip()
+    @staticmethod
+    def _clean_json_candidate(text: str) -> str:
+        cleaned = (text or "").strip()
+        replacements = {
+            "﻿": "",
+            "​": "",
+            " ": " ",
+            "“": '"',
+            "”": '"',
+            "‘": "'",
+            "’": "'",
+        }
+        for source, target in replacements.items():
+            cleaned = cleaned.replace(source, target)
+        cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+        return cleaned.strip()
+    @staticmethod
+    def _find_balanced_json_block(text: str) -> Optional[str]:
+        payload = text or ""
+        for opener, closer in (("{", "}"), ("[", "]")):
+            start_index = payload.find(opener)
+            if start_index == -1:
+                continue
+            depth = 0
+            in_string = False
+            escape = False
+            for index in range(start_index, len(payload)):
+                char = payload[index]
+                if escape:
+                    escape = False
+                    continue
+                if char == "\\" and in_string:
+                    escape = True
+                    continue
+                if char == '"':
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if char == opener:
+                    depth += 1
+                elif char == closer:
+                    depth -= 1
+                    if depth == 0:
+                        return payload[start_index : index + 1]
+        return None
+    @staticmethod
+    def _parse_json_candidate(candidate: str) -> Any:
+        cleaned = AIService._clean_json_candidate(candidate)
         try:
-            return json.loads(payload)
+            return json.loads(cleaned)
+        except json.JSONDecodeError as first_error:
+            python_like = re.sub(r"\btrue\b", "True", cleaned, flags=re.IGNORECASE)
+            python_like = re.sub(r"\bfalse\b", "False", python_like, flags=re.IGNORECASE)
+            python_like = re.sub(r"\bnull\b", "None", python_like, flags=re.IGNORECASE)
+            try:
+                parsed = ast.literal_eval(python_like)
+            except (SyntaxError, ValueError):
+                raise first_error
+            if isinstance(parsed, (dict, list)):
+                return parsed
+            raise first_error
+    @staticmethod
+    def _extract_json(text: str) -> Any:
+        payload = AIService._strip_code_fence(text)
+        candidates: List[str] = []
+        for candidate in (payload, AIService._find_balanced_json_block(payload)):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+        regex_match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", payload)
+        if regex_match:
+            candidate = regex_match.group(1)
+            if candidate not in candidates:
+                candidates.append(candidate)
+        last_error: Optional[Exception] = None
+        for candidate in candidates:
+            try:
+                return AIService._parse_json_candidate(candidate)
+            except (json.JSONDecodeError, SyntaxError, ValueError) as exc:
+                last_error = exc
+        preview = payload[:400].replace("\n", "\\n")
+        logger.warning("AI JSON extraction failed. preview=%s", preview)
+        if isinstance(last_error, json.JSONDecodeError):
+            raise last_error
+        raise json.JSONDecodeError("Unable to decode JSON response", payload, 0)
+    @staticmethod
+    async def _extract_or_repair_json(
+        raw_text: str,
+        schema_hint: str,
+        ai_config: Optional[Dict] = None,
+    ) -> Any:
+        try:
+            return AIService._extract_json(raw_text)
         except json.JSONDecodeError:
-            match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", payload)
-            if not match:
-                raise
-            return json.loads(match.group(1))
-
+            logger.warning("AI JSON malformed, attempting one repair round")
+            repaired = await AIService._chat(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You repair malformed structured output. "
+                            "Return valid JSON only. "
+                            "Do not add commentary or markdown fences."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Repair the following content into valid JSON.\n"
+                            f"Required schema hint: {schema_hint}\n"
+                            f"Original content:\n{raw_text}"
+                        ),
+                    },
+                ],
+                temperature=0,
+                ai_config=ai_config,
+            )
+            return AIService._extract_json(repaired)
     @staticmethod
     def _normalize_panel_roles(panel_snapshot: Optional[Dict]) -> List[Dict]:
         raw_roles = (panel_snapshot or {}).get("roles") or []
@@ -235,13 +336,11 @@ class AIService:
                 }
             )
         return normalized or list(DEFAULT_PANEL_ROLES)
-
     @staticmethod
     def _string_or_empty(value: Any) -> str:
         if value is None:
             return ""
         return str(value).strip()
-
     @staticmethod
     def _string_list(value: Any, limit: int = 6) -> List[str]:
         if value is None:
@@ -258,14 +357,12 @@ class AIService:
             if text:
                 normalized.append(text)
         return normalized[:limit]
-
     @staticmethod
     def _safe_float(value: Any, default: float = 0.0) -> float:
         try:
             return float(value)
         except (TypeError, ValueError):
             return default
-
     @staticmethod
     def _safe_bool(value: Any, default: bool = False) -> bool:
         if isinstance(value, bool):
@@ -277,7 +374,6 @@ class AIService:
             if lowered in {"false", "0", "no", "n"}:
                 return False
         return default
-
     @staticmethod
     def _collect_retrieved_slice_ids(
         knowledge_base: Optional[Dict] = None,
@@ -285,7 +381,6 @@ class AIService:
         question_meta: Optional[Dict] = None,
     ) -> List[int]:
         ordered_ids: List[int] = []
-
         def add_id(value: Any):
             try:
                 slice_id = int(value)
@@ -293,19 +388,14 @@ class AIService:
                 return
             if slice_id not in ordered_ids:
                 ordered_ids.append(slice_id)
-
         for item in question_plan or []:
             for slice_item in item.get("selected_slices") or []:
                 add_id(slice_item.get("slice_id"))
-
         for slice_item in (question_meta or {}).get("selected_slices") or []:
             add_id(slice_item.get("slice_id"))
-
         for slice_item in (knowledge_base or {}).get("slices") or []:
             add_id(slice_item.get("slice_id"))
-
         return ordered_ids
-
     @staticmethod
     def _build_panel_metadata(
         payload: Optional[Dict] = None,
@@ -328,7 +418,6 @@ class AIService:
                 default=True,
             ),
         }
-
     @staticmethod
     def _build_panel_role_views(
         payload: Optional[Dict],
@@ -343,7 +432,6 @@ class AIService:
                 raw_items = payload.get("panel") or []
             elif isinstance(payload.get("panel_views"), list):
                 raw_items = payload.get("panel_views") or []
-
         role_map = {}
         for raw in raw_items:
             if not isinstance(raw, dict):
@@ -357,7 +445,6 @@ class AIService:
             for candidate in candidates:
                 if candidate:
                     role_map[str(candidate)] = raw
-
         normalized = []
         for role in panel_roles:
             raw = role_map.get(role["role_key"]) or role_map.get(role["role"]) or {}
@@ -378,7 +465,6 @@ class AIService:
                 }
             )
         return normalized
-
     @staticmethod
     def _normalize_panel_question_payload(
         payload: Dict,
@@ -388,7 +474,6 @@ class AIService:
     ) -> Dict:
         if not isinstance(payload, dict):
             raise ValueError("Panel payload is not an object")
-
         panel_roles = AIService._normalize_panel_roles(panel_snapshot)
         raw_moderator = payload.get("moderator") or {}
         raw_decisions = raw_moderator.get("selected_questions")
@@ -396,7 +481,6 @@ class AIService:
             raw_decisions = payload.get("questions") or []
         if not isinstance(raw_decisions, list):
             raise ValueError("Panel selected questions payload is not a list")
-
         base_panel = AIService._build_panel_role_views(
             payload=payload,
             panel_roles=panel_roles,
@@ -412,7 +496,6 @@ class AIService:
             knowledge_base=knowledge_base,
             question_plan=question_plan,
         )
-
         questions = []
         moderator_questions = []
         for index, plan in enumerate(question_plan):
@@ -421,13 +504,11 @@ class AIService:
                 raw = {"selected_question": raw}
             if not isinstance(raw, dict):
                 raise ValueError(f"Panel question decision #{index} is invalid")
-
             question_text = AIService._string_or_empty(
                 raw.get("selected_question") or raw.get("question")
             )
             if not question_text:
                 raise ValueError(f"Panel question decision #{index} is missing selected_question")
-
             selected_followups = AIService._string_list(
                 raw.get("selected_followups") or raw.get("followup_candidates")
             )
@@ -442,7 +523,6 @@ class AIService:
             used_slice_ids = raw.get("used_slice_ids") or raw.get("retrieved_slice_ids") or [
                 item.get("slice_id") for item in (plan.get("selected_slices") or []) if item.get("slice_id")
             ]
-
             panel_views = AIService._build_panel_role_views(
                 payload=payload,
                 panel_roles=panel_roles,
@@ -466,7 +546,6 @@ class AIService:
                     "retrieved_slice_ids": used_slice_ids or metadata["retrieved_slice_ids"],
                 },
             }
-
             question_item = {
                 "index": index,
                 "question": question_text,
@@ -493,7 +572,6 @@ class AIService:
                     "used_slice_ids": used_slice_ids or [],
                 }
             )
-
         return {
             "panel": base_panel,
             "moderator": {
@@ -506,7 +584,6 @@ class AIService:
             "questions": questions,
             "moderator_style": moderator_feedback_style,
         }
-
     @staticmethod
     def _normalize_panel_evaluation_payload(
         payload: Dict,
@@ -516,7 +593,6 @@ class AIService:
     ) -> Dict:
         if not isinstance(payload, dict):
             raise ValueError("Panel evaluation payload is not an object")
-
         panel_roles = AIService._normalize_panel_roles(panel_snapshot)
         raw_moderator = payload.get("moderator") or {}
         moderator_feedback = AIService._string_or_empty(
@@ -524,7 +600,6 @@ class AIService:
         )
         if not moderator_feedback:
             raise ValueError("Panel evaluation payload is missing feedback")
-
         metadata = AIService._build_panel_metadata(
             payload=payload,
             knowledge_base=knowledge_base,
@@ -548,7 +623,6 @@ class AIService:
             default_followups=selected_followups,
             default_evaluation_points=evaluation_points,
         )
-
         score = AIService._safe_float(raw_moderator.get("score") or payload.get("score"), default=5.0)
         moderator = {
             "selected_question": AIService._string_or_empty((question_meta or {}).get("question")),
@@ -568,7 +642,6 @@ class AIService:
                 raw_moderator.get("next_focus") or payload.get("next_focus")
             ),
         }
-
         return {
             "score": score,
             "feedback": moderator_feedback,
@@ -587,14 +660,12 @@ class AIService:
             "moderator": moderator,
             "metadata": metadata,
         }
-
     @staticmethod
     def _trim_text(value: Optional[str], limit: int) -> str:
         text = (value or "").strip()
         if len(text) <= limit:
             return text
         return text[:limit].rstrip() + "..."
-
     @staticmethod
     def _resume_snapshot(parsed_resume: dict) -> str:
         compact = {
@@ -606,7 +677,6 @@ class AIService:
             "summary": parsed_resume.get("summary"),
         }
         return json.dumps(compact, ensure_ascii=False)
-
     @staticmethod
     def _history_text(chat_history: Sequence[Dict], limit: int = 6) -> str:
         lines = []
@@ -614,7 +684,6 @@ class AIService:
             role = "Interviewer" if item.get("role") == "interviewer" else "Candidate"
             lines.append(f"{role}: {item.get('content', '')}")
         return "\n".join(lines)
-
     @staticmethod
     def _slice_line(item: Dict, limit: int = 220) -> str:
         stage = "/".join((item.get("stage_tags") or [])[:2]) or "-"
@@ -626,7 +695,6 @@ class AIService:
             f"[stage={stage}] [role={role}] [scene={scene}] "
             f"{AIService._trim_text(item.get('content'), limit)}"
         )
-
     @staticmethod
     def _build_knowledge_base_context(
         knowledge_base: Optional[dict],
@@ -635,24 +703,20 @@ class AIService:
     ) -> str:
         if not knowledge_base:
             return "No knowledge base selected. Rely on resume and target position only."
-
         lines = [
             "Knowledge base context is available. Use it to calibrate interview focus, but do not copy it verbatim.",
             f"Knowledge base title: {knowledge_base.get('title') or 'Untitled'}",
             f"Target position: {knowledge_base.get('target_position') or '-'}",
             f"Source scope: {knowledge_base.get('scope') or 'private'}",
         ]
-
         slices = list(selected_slices or [])
         if not slices:
             slices = list((knowledge_base.get("slices") or [])[:max_slices])
-
         if slices:
             lines.append("Top routed knowledge slices:")
             for item in slices[:max_slices]:
                 lines.append(f"- {AIService._slice_line(item)}")
             return "\n".join(lines)
-
         knowledge_content = AIService._trim_text(knowledge_base.get("knowledge_content"), 2200)
         focus_points = AIService._trim_text(knowledge_base.get("focus_points"), 1200)
         interviewer_prompt = AIService._trim_text(knowledge_base.get("interviewer_prompt"), 1200)
@@ -663,7 +727,6 @@ class AIService:
         if interviewer_prompt:
             lines.append(f"Interviewer guidance: {interviewer_prompt}")
         return "\n".join(lines)
-
     @staticmethod
     def _build_grounding_rules(
         task: str,
@@ -675,7 +738,6 @@ class AIService:
             "- Do not invent candidate experience, metrics, incidents, architecture details, business impact, or project facts.",
             "- Treat the resume, routed slices, chat history, and answer content as the only trusted evidence sources.",
         ]
-
         if task in {"question", "panel_question"}:
             rules.extend(
                 [
@@ -709,9 +771,7 @@ class AIService:
                 rules.append("- Preserve evidence-backed highlights and keep them consistent with the retrieved evidence summary.")
             else:
                 rules.append("- If report evidence is sparse, keep conclusions conservative and avoid over-specific diagnosis.")
-
         return "\n".join(rules)
-
     @staticmethod
     def _build_question_plan_context(question_plan: Optional[Sequence[Dict]]) -> str:
         if not question_plan:
@@ -730,7 +790,6 @@ class AIService:
             for slice_item in (item.get("selected_slices") or [])[:3]:
                 lines.append(f"  routed_slice: {AIService._slice_line(slice_item, limit=180)}")
         return "\n".join(lines)
-
     @staticmethod
     def _build_panel_context(panel_snapshot: Optional[Dict]) -> str:
         if not panel_snapshot or panel_snapshot.get("mode") != "panel":
@@ -745,7 +804,6 @@ class AIService:
                 f"- {role.get('key')}: {role.get('name')} | focus={role.get('focus')}"
             )
         return "\n".join(lines)
-
     @staticmethod
     def _build_report_signal_context(report_signals: Optional[Dict]) -> str:
         if not report_signals:
@@ -782,14 +840,12 @@ class AIService:
                         f"- {item.get('role')}: {item.get('summary') or item.get('title') or ''}"
                     )
         return "\n".join(lines)
-
     @staticmethod
     def _normalize_question_array(payload: Any) -> List[Dict]:
         if isinstance(payload, dict) and isinstance(payload.get("questions"), list):
             payload = payload["questions"]
         if not isinstance(payload, list):
             raise ValueError("Question payload is not a list")
-
         normalized = []
         for index, item in enumerate(payload):
             if isinstance(item, str):
@@ -800,7 +856,6 @@ class AIService:
         if not normalized:
             raise ValueError("Question payload is empty")
         return normalized
-
     @staticmethod
     async def parse_resume(resume_text: str, ai_config: Optional[Dict] = None) -> dict:
         messages = [
@@ -818,7 +873,11 @@ class AIService:
             },
         ]
         result = await AIService._chat(messages, temperature=0.2, ai_config=ai_config)
-        return AIService._extract_json(result)
+        return await AIService._extract_or_repair_json(
+            result,
+            'JSON object with keys: name, education, skills, experience, projects, summary',
+            ai_config=ai_config,
+        )
 
     @staticmethod
     async def analyze_resume(
@@ -847,8 +906,11 @@ class AIService:
             },
         ]
         result = await AIService._chat(messages, temperature=0.4, ai_config=ai_config)
-        return AIService._extract_json(result)
-
+        return await AIService._extract_or_repair_json(
+            result,
+            'JSON object with keys: overall_score, strengths, weaknesses, suggestions, keyword_match, missing_keywords, summary',
+            ai_config=ai_config,
+        )
     @staticmethod
     async def generate_questions(
         parsed_resume: dict,
@@ -894,7 +956,6 @@ class AIService:
         ]
         result = await AIService._chat(messages, temperature=0.65, ai_config=ai_config)
         return AIService._normalize_question_array(AIService._extract_json(result))
-
     @staticmethod
     async def generate_panel_questions(
         parsed_resume: dict,
@@ -958,7 +1019,6 @@ class AIService:
             len(normalized.get("questions") or []),
         )
         return normalized
-
     @staticmethod
     async def evaluate_answer(
         question: str,
@@ -999,7 +1059,6 @@ class AIService:
         ]
         result = await AIService._chat(messages, temperature=0.35, ai_config=ai_config)
         return AIService._extract_json(result)
-
     @staticmethod
     async def evaluate_answer_with_panel(
         question: str,
@@ -1061,7 +1120,6 @@ class AIService:
             (question_meta or {}).get("lead_role") or "-",
         )
         return normalized
-
     @staticmethod
     async def evaluate_answer_stream(
         question: str,
@@ -1085,7 +1143,6 @@ class AIService:
         if feedback:
             yield feedback
         yield f'\n```json\n{{"score": {result.get("score", 5.0)}}}\n```'
-
     @staticmethod
     def _qa_text(questions_and_scores: Sequence[Dict]) -> str:
         lines = []
@@ -1119,7 +1176,6 @@ class AIService:
                     )
             lines.append("")
         return "\n".join(lines)
-
     @staticmethod
     async def generate_report(
         parsed_resume: dict,
@@ -1155,7 +1211,6 @@ class AIService:
         ]
         result = await AIService._chat(messages, temperature=0.35, ai_config=ai_config)
         return AIService._extract_json(result)
-
     @staticmethod
     async def generate_panel_report(
         parsed_resume: dict,

@@ -374,7 +374,8 @@ const resumeStatusMeta = {
   extracting: { progress: 32, title: '正在提取 PDF 文本内容...' },
   parsing: { progress: 58, title: 'AI 正在结构化解析简历...' },
   analyzing: { progress: 82, title: 'AI 正在生成简历分析报告...' },
-  completed: { progress: 100, title: '解析完成，正在准备结果...' }
+  completed: { progress: 100, title: '解析完成，正在准备结果...' },
+  failed: { progress: 100, title: '解析失败，正在返回结果...' }
 }
 
 function syncParsingStage(status) {
@@ -574,6 +575,8 @@ async function handleUpload() {
         return
       }
       if (detail.status === 'failed') {
+        syncParsingStage('failed')
+        await new Promise(r => setTimeout(r, 300))
         throw new Error(detail.error_message || '简历解析失败，请重试')
       }
       retries++
@@ -581,6 +584,8 @@ async function handleUpload() {
     throw new Error('简历仍在后台解析中，请稍后到上传记录查看结果，无需重新上传')
   } catch (e) {
     stopAnimations()
+    progress.value = 0
+    parsingTitle.value = '正在上传简历...'
     error.value = e.message
     step.value = 1
   } finally {

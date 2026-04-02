@@ -148,3 +148,30 @@ def test_grounding_rules_require_conservative_output_without_evidence():
 
     report_rules = AIService._build_grounding_rules("report", has_report_evidence=False)
     assert "insufficient evidence" in report_rules
+
+
+@pytest.mark.unit
+def test_extract_json_accepts_code_fence_and_trailing_commas():
+    payload = """```json
+    {
+      "name": "张三",
+      "skills": ["Python", "FastAPI",],
+      "projects": []
+    }
+    ```"""
+
+    parsed = AIService._extract_json(payload)
+
+    assert parsed["name"] == "张三"
+    assert parsed["skills"] == ["Python", "FastAPI"]
+
+
+@pytest.mark.unit
+def test_extract_json_accepts_python_style_dict_output():
+    payload = """分析如下：
+    {'overall_score': 7.5, 'strengths': ['基础扎实'], 'weaknesses': ['项目细节不足'], 'suggestions': ['补充量化结果']}"""
+
+    parsed = AIService._extract_json(payload)
+
+    assert parsed["overall_score"] == 7.5
+    assert parsed["strengths"] == ["基础扎实"]
