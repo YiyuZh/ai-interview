@@ -323,10 +323,27 @@ onUnmounted(() => {
   stopStartingAnimation()
 })
 
-function onFileChange(e) { file.value = e.target.files[0] }
+function selectPdfFile(candidate) {
+  if (!candidate) return
+  if (!candidate.name?.toLowerCase().endsWith('.pdf')) {
+    error.value = '仅支持上传 PDF 简历'
+    file.value = null
+    return
+  }
+  if (candidate.size > 10 * 1024 * 1024) {
+    error.value = '文件大小不能超过 10MB'
+    file.value = null
+    return
+  }
+  error.value = ''
+  file.value = candidate
+}
+
+function onFileChange(e) {
+  selectPdfFile(e.target.files[0])
+}
 function onDrop(e) {
-  const f = e.dataTransfer.files[0]
-  if (f && f.name.endsWith('.pdf')) file.value = f
+  selectPdfFile(e.dataTransfer.files[0])
 }
 
 function normalizePosition(value) {

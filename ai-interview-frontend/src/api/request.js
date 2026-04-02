@@ -10,7 +10,7 @@ const api = axios.create({
   timeout
 })
 
-// 请求拦截器 - 自动带上 token
+// 请求拦截器：自动带上 token
 api.interceptors.request.use(config => {
   const authStore = useAuthStore()
   if (authStore.token) {
@@ -19,7 +19,7 @@ api.interceptors.request.use(config => {
   return config
 })
 
-// 响应拦截器 - 统一处理错误
+// 响应拦截器：统一处理错误
 api.interceptors.response.use(
   response => {
     const data = response.data
@@ -34,9 +34,18 @@ api.interceptors.response.use(
       authStore.logout()
       router.push('/login')
     }
+
     const data = error.response?.data
-    // 处理 FastAPI 422 验证错误的详细信息
     let msg = data?.message || error.message || '网络错误'
+
+    if (!error.response && error.message === 'Network Error') {
+      msg = '网络连接失败，请稍后重试；如果反复失败，请检查服务状态或简历文件大小'
+    } else if (error.response?.status === 502) {
+      msg = '服务暂时不可用，请稍后重试'
+    } else if (error.response?.status === 413) {
+      msg = '上传文件过大，请控制在 10MB 以内'
+    }
+
     if (data?.detail) {
       if (Array.isArray(data.detail)) {
         msg = data.detail.map(d => d.msg || d.message || JSON.stringify(d)).join('; ')
@@ -44,6 +53,7 @@ api.interceptors.response.use(
         msg = data.detail
       }
     }
+
     return Promise.reject(new Error(msg))
   }
 )

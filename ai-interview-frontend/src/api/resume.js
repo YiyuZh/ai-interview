@@ -5,7 +5,6 @@ export function uploadResume(file, targetPosition) {
   formData.append('file', file)
   formData.append('target_position', targetPosition)
   return api.post('/resumes/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000
   })
 }
