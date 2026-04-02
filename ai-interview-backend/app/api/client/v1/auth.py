@@ -26,7 +26,6 @@ from app.schemas.client.auth import (
 )
 from app.schemas.client.user import UserProfile
 from app.schemas.response import ApiResponse
-from app.services.client.ai_service import AIService
 from app.services.client.auth import client_auth_service
 from app.services.common.deepseek_config_service import deepseek_config_service
 
@@ -285,6 +284,8 @@ async def test_ai_connection(
     data: AIConnectionTestRequest,
     current_user: User = Depends(get_current_user),
 ):
+    from app.services.client.ai_service import AIService
+
     runtime_config = deepseek_config_service.build_runtime_config(
         current_user,
         require_personal_key=True,
