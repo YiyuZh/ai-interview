@@ -182,6 +182,24 @@ PANEL_ROLE_TITLES = {
 
 class InterviewService:
     @staticmethod
+    def _load_resume_analysis_payload(resume: Resume) -> Dict[str, Any]:
+        payload = (resume.analysis or "").strip()
+        if not payload:
+            return {}
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            logger.warning("Resume analysis payload is not valid JSON: resume_id=%s", resume.id)
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _load_resume_evidence(resume: Resume) -> Dict[str, Any]:
+        analysis_payload = InterviewService._load_resume_analysis_payload(resume)
+        evidence = analysis_payload.get("resume_evidence") or {}
+        return evidence if isinstance(evidence, dict) else {}
+
+    @staticmethod
     def _load_resume_payload(resume: Resume) -> Dict[str, Any]:
         payload = (resume.parsed_content or "").strip()
         if not payload:
@@ -256,6 +274,217 @@ class InterviewService:
         if fallback_reason:
             snapshot["fallback_reason"] = fallback_reason
         return snapshot
+
+    @staticmethod
+    def _blueprint_claim_strings(interview_blueprint: Optional[Dict], limit: int = 4) -> List[str]:
+        claims: List[str] = []
+        for item in (interview_blueprint or {}).get("high_risk_claims") or []:
+            text = ""
+            if isinstance(item, dict):
+                text = str(item.get("claim") or "").strip()
+            else:
+                text = str(item).strip()
+            if text and text not in claims:
+                claims.append(text)
+            if len(claims) >= limit:
+                break
+        return claims
+
+    @staticmethod
+    def _question_target_evidence_ids(question_meta: Optional[Dict]) -> List[int]:
+        ordered: List[int] = []
+        for source in (
+            (question_meta or {}).get("question_target_evidence_ids") or [],
+            (question_meta or {}).get("blueprint_evidence_ids") or [],
+            (question_meta or {}).get("used_slice_ids") or [],
+            InterviewService._question_slice_ids(question_meta),
+        ):
+            for value in source:
+                try:
+                    slice_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if slice_id not in ordered:
+                    ordered.append(slice_id)
+        return ordered[:8]
+
+    @staticmethod
+    def _question_target_evidence_summary(question_meta: Optional[Dict]) -> List[str]:
+        summary = InterviewService._unique_strings(
+            [
+                *((question_meta or {}).get("question_target_evidence") or []),
+                *((question_meta or {}).get("blueprint_evidence_summary") or []),
+                *((question_meta or {}).get("evidence_summary") or []),
+                *[
+                    InterviewService._slice_label(item)
+                    for item in ((question_meta or {}).get("selected_slices") or [])[:2]
+                    if item
+                ],
+            ],
+            limit=4,
+        )
+        return summary
+
+    @staticmethod
+    def _derive_question_target_fields(question_meta: Optional[Dict]) -> Dict[str, Any]:
+        meta = dict(question_meta or {})
+        target_gap = (
+            str(meta.get("question_target_gap") or "").strip()
+            or str(meta.get("blueprint_track") or "").strip()
+            or next(
+                (
+                    str(item).strip()
+                    for item in (meta.get("evaluation_focus") or [])
+                    if str(item).strip()
+                ),
+                "",
+            )
+            or str(meta.get("intent") or "").strip()
+            or str(meta.get("category") or "").strip()
+        )
+        target_evidence = InterviewService._question_target_evidence_summary(meta)
+        target_evidence_ids = InterviewService._question_target_evidence_ids(meta)
+        reason = str(meta.get("question_reason") or "").strip()
+        requirement_status = str(meta.get("blueprint_requirement_status") or "").strip()
+        if not reason:
+            if meta.get("is_dynamic_followup"):
+                reason = (
+                    f"继续验证上一轮暴露的薄弱证据：{target_gap}"
+                    if target_gap
+                    else "继续验证上一轮回答里尚未被补强的关键证据。"
+                )
+            elif requirement_status == "unsupported":
+                reason = (
+                    f"当前几乎没有直接证据支持“{target_gap}”，需要先做保守验证。"
+                    if target_gap
+                    else "当前直接证据很弱，需要先做保守验证。"
+                )
+            elif requirement_status == "weak":
+                reason = (
+                    f"当前只有弱证据支持“{target_gap}”，需要通过本题继续核实。"
+                    if target_gap
+                    else "当前只有弱证据支持这一能力，需要通过本题继续核实。"
+                )
+            elif target_evidence:
+                reason = (
+                    f"围绕已命中的简历/知识库证据继续核实“{target_gap}”是否真实成立。"
+                    if target_gap
+                    else "围绕已命中的简历/知识库证据继续核实候选人的真实能力边界。"
+                )
+            else:
+                reason = (
+                    f"围绕“{target_gap}”补齐更具体的事实和证据。"
+                    if target_gap
+                    else "补齐更具体的事实和证据，避免只停留在泛化表述。"
+                )
+
+        return {
+            "question_target_gap": target_gap or None,
+            "question_target_evidence": target_evidence,
+            "question_target_evidence_ids": target_evidence_ids,
+            "question_reason": reason,
+        }
+
+    @staticmethod
+    def _slice_ids_for_blueprint(question_plan: Sequence[Dict]) -> List[int]:
+        ordered: List[int] = []
+        for item in question_plan or []:
+            for slice_item in item.get("selected_slices") or []:
+                try:
+                    slice_id = int(slice_item.get("slice_id"))
+                except (TypeError, ValueError):
+                    continue
+                if slice_id not in ordered:
+                    ordered.append(slice_id)
+        return ordered
+
+    @staticmethod
+    def _apply_blueprint_to_question_plan(
+        question_plan: Sequence[Dict],
+        interview_blueprint: Optional[Dict],
+    ) -> List[Dict]:
+        if not interview_blueprint:
+            return [dict(item) for item in question_plan]
+
+        tracks = list((interview_blueprint or {}).get("priority_question_tracks") or [])
+        training_focus = InterviewService._unique_strings(
+            (interview_blueprint or {}).get("training_focus") or [],
+            limit=4,
+        )
+        high_risk_claims = InterviewService._blueprint_claim_strings(interview_blueprint, limit=4)
+        blueprint_evidence = (interview_blueprint or {}).get("blueprint_evidence") or {}
+        global_evidence_ids = []
+        for value in blueprint_evidence.get("slice_ids") or []:
+            try:
+                slice_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if slice_id not in global_evidence_ids:
+                global_evidence_ids.append(slice_id)
+        global_evidence_summary = InterviewService._unique_strings(
+            [
+                *(interview_blueprint.get("evidence_summary") or []),
+                *(blueprint_evidence.get("slice_summaries") or []),
+            ],
+            limit=4,
+        )
+
+        enriched_plan: List[Dict] = []
+        for index, item in enumerate(question_plan or []):
+            next_item = dict(item)
+            track_item = tracks[min(index, len(tracks) - 1)] if tracks else None
+            if isinstance(track_item, dict):
+                track_name = str(track_item.get("track") or "").strip()
+                track_status = str(track_item.get("requirement_status") or "weak").strip() or "weak"
+                track_reason = str(track_item.get("reason") or "").strip()
+                track_ids = []
+                for value in track_item.get("evidence_ids") or []:
+                    try:
+                        slice_id = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if slice_id not in track_ids:
+                        track_ids.append(slice_id)
+            else:
+                track_name = ""
+                track_status = "weak"
+                track_reason = ""
+                track_ids = []
+
+            if not track_name and training_focus:
+                track_name = training_focus[min(index, len(training_focus) - 1)]
+            if track_name:
+                base_intent = str(next_item.get("intent") or "").strip()
+                next_item["blueprint_track"] = track_name
+                next_item["blueprint_requirement_status"] = track_status
+                next_item["blueprint_evidence_ids"] = track_ids[:4] or global_evidence_ids[:4]
+                next_item["blueprint_evidence_summary"] = InterviewService._unique_strings(
+                    [track_reason, *global_evidence_summary],
+                    limit=3,
+                )
+                next_item["intent"] = (
+                    f"{base_intent} Blueprint priority: {track_name}."
+                    if base_intent
+                    else f"Blueprint priority: {track_name}."
+                )
+                next_item["evaluation_focus"] = InterviewService._unique_strings(
+                    [
+                        *(next_item.get("evaluation_focus") or []),
+                        track_name,
+                        *training_focus[:1],
+                    ],
+                    limit=6,
+                )
+
+            if high_risk_claims and index < 2:
+                next_item["blueprint_high_risk_claims"] = high_risk_claims[:3]
+                next_item["selected_followups"] = InterviewService._unique_strings(
+                    [*(next_item.get("selected_followups") or []), high_risk_claims[index]],
+                    limit=3,
+                )
+
+            enriched_plan.append(next_item)
+        return enriched_plan
 
     @staticmethod
     def _compact_slice(item: Dict) -> Dict:
@@ -451,37 +680,53 @@ class InterviewService:
                 if matched:
                     selected_slices = matched
 
-            normalized.append(
-                {
-                    "index": index,
-                    "question": question_text,
-                    "category": raw.get("category") or plan.get("category"),
-                    "stage": raw.get("stage") or plan.get("stage"),
-                    "lead_role": raw.get("lead_role") or plan.get("lead_role"),
-                    "support_roles": support_roles,
-                    "intent": raw.get("intent") or plan.get("intent"),
-                    "evaluation_focus": evaluation_focus,
-                    "selected_slices": selected_slices,
-                    "used_slice_ids": requested_ids or [],
-                    "evidence_trace": InterviewService._build_evidence_trace(
-                        selected_slices,
-                        used_slice_ids=requested_ids or [],
-                    ),
-                    "evidence_summary": InterviewService._build_evidence_summary(
-                        selected_slices,
-                        used_slice_ids=requested_ids or [],
-                    ),
-                    "selected_followups": raw.get("selected_followups") or [],
-                    "difficulty_hint": raw.get("difficulty_hint"),
-                    "panel_context": raw.get("panel_context") or {},
-                    "panel_reasoning_summary": raw.get("panel_reasoning_summary"),
-                    "interview_mode": interview_mode,
-                    "answer": None,
-                    "score": None,
-                    "feedback": None,
-                    "evaluation": None,
-                }
-            )
+            question_item = {
+                "index": index,
+                "question": question_text,
+                "category": raw.get("category") or plan.get("category"),
+                "stage": raw.get("stage") or plan.get("stage"),
+                "lead_role": raw.get("lead_role") or plan.get("lead_role"),
+                "support_roles": support_roles,
+                "intent": raw.get("intent") or plan.get("intent"),
+                "evaluation_focus": evaluation_focus,
+                "selected_slices": selected_slices,
+                "used_slice_ids": requested_ids or [],
+                "evidence_trace": InterviewService._build_evidence_trace(
+                    selected_slices,
+                    used_slice_ids=requested_ids or [],
+                ),
+                "evidence_summary": InterviewService._build_evidence_summary(
+                    selected_slices,
+                    used_slice_ids=requested_ids or [],
+                ),
+                "blueprint_track": raw.get("blueprint_track") or plan.get("blueprint_track"),
+                "blueprint_requirement_status": raw.get("blueprint_requirement_status")
+                or plan.get("blueprint_requirement_status"),
+                "blueprint_evidence_ids": raw.get("blueprint_evidence_ids")
+                or plan.get("blueprint_evidence_ids")
+                or [],
+                "blueprint_evidence_summary": raw.get("blueprint_evidence_summary")
+                or plan.get("blueprint_evidence_summary")
+                or [],
+                "blueprint_high_risk_claims": raw.get("blueprint_high_risk_claims")
+                or plan.get("blueprint_high_risk_claims")
+                or [],
+                "selected_followups": raw.get("selected_followups") or [],
+                "difficulty_hint": raw.get("difficulty_hint"),
+                "panel_context": raw.get("panel_context") or {},
+                "panel_reasoning_summary": raw.get("panel_reasoning_summary"),
+                "question_target_gap": raw.get("question_target_gap"),
+                "question_target_evidence": raw.get("question_target_evidence") or [],
+                "question_target_evidence_ids": raw.get("question_target_evidence_ids") or [],
+                "question_reason": raw.get("question_reason"),
+                "interview_mode": interview_mode,
+                "answer": None,
+                "score": None,
+                "feedback": None,
+                "evaluation": None,
+            }
+            question_item.update(InterviewService._derive_question_target_fields(question_item))
+            normalized.append(question_item)
         return normalized
 
     @staticmethod
@@ -523,6 +768,15 @@ class InterviewService:
                     "used_slice_ids": question.get("used_slice_ids") or [],
                     "evidence_trace": question.get("evidence_trace") or [],
                     "evidence_summary": question.get("evidence_summary") or [],
+                    "question_target_gap": question.get("question_target_gap"),
+                    "question_target_evidence": question.get("question_target_evidence") or [],
+                    "question_target_evidence_ids": question.get("question_target_evidence_ids") or [],
+                    "question_reason": question.get("question_reason"),
+                    "blueprint_track": question.get("blueprint_track"),
+                    "blueprint_requirement_status": question.get("blueprint_requirement_status"),
+                    "blueprint_evidence_ids": question.get("blueprint_evidence_ids") or [],
+                    "blueprint_evidence_summary": question.get("blueprint_evidence_summary") or [],
+                    "blueprint_high_risk_claims": question.get("blueprint_high_risk_claims") or [],
                     "selected_followups": question.get("selected_followups") or [],
                     "panel_context": question.get("panel_context") or {},
                     "evaluation": question.get("evaluation") or {},
@@ -574,8 +828,14 @@ class InterviewService:
             terms.extend(current_question_meta.get("selected_followups") or [])
         if evaluation:
             terms.extend(evaluation.get("gaps") or [])
+            terms.extend(evaluation.get("unresolved_gaps") or [])
             if evaluation.get("next_focus"):
                 terms.append(evaluation.get("next_focus"))
+            next_best_followup = evaluation.get("next_best_followup") or {}
+            if isinstance(next_best_followup, dict):
+                if next_best_followup.get("target_gap"):
+                    terms.append(next_best_followup.get("target_gap"))
+                terms.extend(next_best_followup.get("target_evidence") or [])
             for item in evaluation.get("panel_views") or []:
                 if isinstance(item, dict) and item.get("summary"):
                     terms.append(item.get("summary"))
@@ -594,6 +854,9 @@ class InterviewService:
                 if text and text not in ordered:
                     ordered.append(text)
 
+        next_best_followup = (evaluation or {}).get("next_best_followup") or {}
+        if isinstance(next_best_followup, dict):
+            add_many([next_best_followup.get("question")])
         add_many((evaluation or {}).get("moderator", {}).get("selected_followups") or [])
         add_many((evaluation or {}).get("selected_followups") or [])
         for item in (evaluation or {}).get("panel") or []:
@@ -608,6 +871,7 @@ class InterviewService:
         next_question_meta: Dict,
         evaluation: Optional[Dict],
     ) -> Dict:
+        next_best_followup = (evaluation or {}).get("next_best_followup") or {}
         followups = InterviewService._extract_followup_candidates(current_question_meta, evaluation)
         if not followups:
             return next_question_meta
@@ -634,11 +898,67 @@ class InterviewService:
         next_meta["selected_followups"] = followups[1:]
         next_meta["followup_source_question_index"] = current_question_meta.get("index")
         next_meta["is_dynamic_followup"] = True
+        next_meta["blueprint_track"] = (
+            current_question_meta.get("blueprint_track") or next_meta.get("blueprint_track")
+        )
+        next_meta["blueprint_requirement_status"] = (
+            current_question_meta.get("blueprint_requirement_status")
+            or next_meta.get("blueprint_requirement_status")
+        )
+        next_meta["blueprint_evidence_ids"] = (
+            current_question_meta.get("blueprint_evidence_ids")
+            or next_meta.get("blueprint_evidence_ids")
+            or []
+        )
+        next_meta["blueprint_evidence_summary"] = InterviewService._unique_strings(
+            [
+                *(current_question_meta.get("blueprint_evidence_summary") or []),
+                *(next_meta.get("blueprint_evidence_summary") or []),
+            ],
+            limit=4,
+        )
+        next_meta["blueprint_high_risk_claims"] = InterviewService._unique_strings(
+            [
+                *(current_question_meta.get("blueprint_high_risk_claims") or []),
+                *(next_meta.get("blueprint_high_risk_claims") or []),
+            ],
+            limit=4,
+        )
+        if isinstance(next_best_followup, dict):
+            next_meta["question_target_gap"] = (
+                str(next_best_followup.get("target_gap") or "").strip()
+                or current_question_meta.get("question_target_gap")
+                or next_meta.get("question_target_gap")
+            )
+            next_meta["question_target_evidence"] = InterviewService._unique_strings(
+                [
+                    *(next_best_followup.get("target_evidence") or []),
+                    *(next_best_followup.get("evidence_source_summary") or []),
+                    *(current_question_meta.get("question_target_evidence") or []),
+                ],
+                limit=4,
+            )
+            next_meta["question_target_evidence_ids"] = InterviewService._question_target_evidence_ids(
+                {
+                    **next_meta,
+                    "question_target_evidence_ids": [
+                        *(next_best_followup.get("evidence_source_ids") or []),
+                        *(current_question_meta.get("question_target_evidence_ids") or []),
+                    ],
+                }
+            )
+            next_meta["question_reason"] = (
+                str(next_best_followup.get("reason") or "").strip()
+                or current_question_meta.get("question_reason")
+                or next_meta.get("question_reason")
+            )
 
         panel_context = dict(current_question_meta.get("panel_context") or {})
         moderator = dict(panel_context.get("moderator") or {})
         moderator["selected_question"] = followups[0]
         moderator["selected_followups"] = followups[1:]
+        if isinstance(next_best_followup, dict) and next_best_followup:
+            moderator["next_best_followup"] = next_best_followup
         if (evaluation or {}).get("moderator", {}).get("reasoning_summary"):
             moderator["reasoning_summary"] = evaluation["moderator"]["reasoning_summary"]
         if (evaluation or {}).get("moderator", {}).get("difficulty_hint"):
@@ -647,6 +967,7 @@ class InterviewService:
             panel_context["moderator"] = moderator
             next_meta["panel_context"] = panel_context
 
+        next_meta.update(InterviewService._derive_question_target_fields(next_meta))
         return next_meta
 
     @staticmethod
@@ -713,7 +1034,59 @@ class InterviewService:
         if metadata:
             panel_context["metadata"] = metadata
             next_meta["panel_context"] = panel_context
+        next_meta.update(InterviewService._derive_question_target_fields(next_meta))
         return next_meta
+
+    @staticmethod
+    async def _evaluate_round(
+        interview_mode: str,
+        question: str,
+        answer: str,
+        resume_context: Dict[str, Any],
+        chat_history: List[Dict[str, Any]],
+        knowledge_base: Optional[Dict[str, Any]],
+        question_meta: Dict[str, Any],
+        panel_snapshot: Optional[Dict[str, Any]],
+        ai_config: Optional[Dict[str, Any]],
+    ) -> tuple[str, Dict[str, Any]]:
+        evaluation_mode = interview_mode
+        try:
+            if interview_mode == "panel":
+                evaluation = await AIService.evaluate_answer_with_panel(
+                    question=question,
+                    answer=answer,
+                    resume_context=resume_context,
+                    chat_history=chat_history,
+                    knowledge_base=knowledge_base,
+                    question_meta=question_meta,
+                    panel_snapshot=panel_snapshot,
+                    ai_config=ai_config,
+                )
+            else:
+                evaluation = await AIService.evaluate_answer(
+                    question=question,
+                    answer=answer,
+                    resume_context=resume_context,
+                    chat_history=chat_history,
+                    knowledge_base=knowledge_base,
+                    question_meta=question_meta,
+                    ai_config=ai_config,
+                )
+        except Exception as exc:
+            if interview_mode != "panel":
+                raise
+            logger.warning("Panel evaluation failed, fallback to single mode: %s", exc)
+            evaluation_mode = "single_fallback"
+            evaluation = await AIService.evaluate_answer(
+                question=question,
+                answer=answer,
+                resume_context=resume_context,
+                chat_history=chat_history,
+                knowledge_base=knowledge_base,
+                question_meta=question_meta,
+                ai_config=ai_config,
+            )
+        return evaluation_mode, evaluation
 
     @staticmethod
     def _build_report_signals(questions: List[Dict]) -> Dict:
@@ -723,11 +1096,20 @@ class InterviewService:
         training_priorities: List[str] = []
         panel_notes: Dict[str, List[str]] = {}
         evidence_summary: List[str] = []
+        followup_loop_summary: List[str] = []
+        claim_confidence_summary: List[str] = []
         evidence_question_count = 0
 
         for question in questions:
             evaluation = question.get("evaluation") or {}
-            for item in evaluation.get("gaps") or []:
+            unresolved_gaps = InterviewService._unique_strings(
+                [
+                    *(evaluation.get("unresolved_gaps") or []),
+                    *(evaluation.get("gaps") or []),
+                ],
+                limit=5,
+            )
+            for item in unresolved_gaps:
                 text = str(item).strip()
                 if text:
                     gap_counter[text] += 1
@@ -735,9 +1117,51 @@ class InterviewService:
                 text = str(item).strip()
                 if text:
                     strength_counter[text] += 1
+            for item in evaluation.get("evidence_strength_delta") or []:
+                if not isinstance(item, dict):
+                    continue
+                evidence_text = str(item.get("evidence") or "").strip()
+                delta = str(item.get("delta") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                if evidence_text and delta in {"strengthened", "increased"}:
+                    strength_counter[evidence_text] += 1
+                elif evidence_text and delta in {"weakened", "insufficient"}:
+                    gap_counter[evidence_text] += 1
+                if evidence_text:
+                    summary_text = f"{evidence_text}：{delta or 'unchanged'}"
+                    if reason:
+                        summary_text = f"{summary_text}（{reason}）"
+                    if summary_text not in followup_loop_summary:
+                        followup_loop_summary.append(summary_text)
+            for item in evaluation.get("claim_confidence_change") or []:
+                if not isinstance(item, dict):
+                    continue
+                claim = str(item.get("claim") or "").strip()
+                if not claim:
+                    continue
+                before_level = str(item.get("from_level") or "").strip()
+                after_level = str(item.get("to_level") or "").strip()
+                reason = str(item.get("reason") or "").strip()
+                summary_text = f"“{claim}”置信度 {before_level or '-'} -> {after_level or '-'}"
+                if reason:
+                    summary_text = f"{summary_text}（{reason}）"
+                if summary_text not in claim_confidence_summary:
+                    claim_confidence_summary.append(summary_text)
             next_focus = str(evaluation.get("next_focus") or "").strip()
             if next_focus:
                 training_priorities.append(next_focus)
+            next_best_followup = evaluation.get("next_best_followup") or {}
+            if isinstance(next_best_followup, dict):
+                if next_best_followup.get("target_gap"):
+                    training_priorities.append(str(next_best_followup.get("target_gap")).strip())
+                followup_reason = str(next_best_followup.get("reason") or "").strip()
+                followup_question = str(next_best_followup.get("question") or "").strip()
+                if followup_question:
+                    summary_text = f"建议继续追问：{followup_question}"
+                    if followup_reason:
+                        summary_text = f"{summary_text}（{followup_reason}）"
+                    if summary_text not in followup_loop_summary:
+                        followup_loop_summary.append(summary_text)
 
             for value in question.get("used_slice_ids") or []:
                 try:
@@ -785,6 +1209,8 @@ class InterviewService:
             "panel_summary": panel_summary,
             "retrieved_slice_ids": slice_ids,
             "evidence_summary": evidence_summary[:6],
+            "followup_loop_summary": followup_loop_summary[:6],
+            "claim_confidence_summary": claim_confidence_summary[:6],
             "evidence_stats": {
                 "questions_with_evidence": evidence_question_count,
                 "total_questions": len(questions),
@@ -807,10 +1233,16 @@ class InterviewService:
             merged["training_priorities"] = report_signals["training_priorities"]
         if not merged.get("common_gaps") and report_signals.get("common_gaps"):
             merged["common_gaps"] = report_signals["common_gaps"]
+        if not merged.get("common_strengths") and report_signals.get("common_strengths"):
+            merged["common_strengths"] = report_signals["common_strengths"]
         if interview_mode == "panel" and not merged.get("panel_summary") and report_signals.get("panel_summary"):
             merged["panel_summary"] = report_signals["panel_summary"]
         if not merged.get("evidence_summary") and report_signals.get("evidence_summary"):
             merged["evidence_summary"] = report_signals["evidence_summary"]
+        if not merged.get("followup_loop_summary") and report_signals.get("followup_loop_summary"):
+            merged["followup_loop_summary"] = report_signals["followup_loop_summary"]
+        if not merged.get("claim_confidence_summary") and report_signals.get("claim_confidence_summary"):
+            merged["claim_confidence_summary"] = report_signals["claim_confidence_summary"]
         if not merged.get("evidence_stats") and report_signals.get("evidence_stats"):
             merged["evidence_stats"] = report_signals["evidence_stats"]
         return merged
@@ -926,9 +1358,34 @@ class InterviewService:
             target_position=target_position,
             difficulty=difficulty,
         )
+        resume_evidence = InterviewService._load_resume_evidence(resume)
+        try:
+            interview_blueprint = await AIService.extract_interview_blueprint(
+                parsed_resume=parsed_resume,
+                target_position=target_position,
+                resume_evidence=resume_evidence,
+                knowledge_base=knowledge_base_context,
+                question_plan=question_plan,
+                ai_config=ai_config,
+            )
+        except Exception as exc:
+            logger.warning("Interview blueprint generation failed, using fallback: %s", exc)
+            interview_blueprint = AIService.build_interview_blueprint_fallback(
+                parsed_resume=parsed_resume,
+                target_position=target_position,
+                resume_evidence=resume_evidence,
+                knowledge_base=knowledge_base_context,
+                question_plan=question_plan,
+            )
+        question_plan = InterviewService._apply_blueprint_to_question_plan(
+            question_plan=question_plan,
+            interview_blueprint=interview_blueprint,
+        )
 
         interview_mode = "panel" if multi_interviewer_enabled else "single"
         panel_snapshot = InterviewService._build_panel_snapshot(interview_mode)
+        if interview_blueprint:
+            panel_snapshot["interview_blueprint"] = interview_blueprint
 
         try:
             if interview_mode == "panel":
@@ -940,6 +1397,7 @@ class InterviewService:
                     question_plan=question_plan,
                     knowledge_base=knowledge_base_context,
                     panel_snapshot=panel_snapshot,
+                    interview_blueprint=interview_blueprint,
                     ai_config=ai_config,
                 )
                 if panel_payload.get("moderator_style"):
@@ -964,6 +1422,7 @@ class InterviewService:
                     count=total_questions,
                     knowledge_base=knowledge_base_context,
                     question_plan=question_plan,
+                    interview_blueprint=interview_blueprint,
                     ai_config=ai_config,
                 )
                 questions = InterviewService._normalize_questions(
@@ -986,6 +1445,7 @@ class InterviewService:
                         count=total_questions,
                         knowledge_base=knowledge_base_context,
                         question_plan=question_plan,
+                        interview_blueprint=interview_blueprint,
                         ai_config=ai_config,
                     )
                     questions = InterviewService._normalize_questions(
@@ -999,6 +1459,8 @@ class InterviewService:
                         requested_panel=True,
                         fallback_reason="panel_generation_failed",
                     )
+                    if interview_blueprint:
+                        panel_snapshot["interview_blueprint"] = interview_blueprint
                 except ValidationError as inner_exc:
                     raise ValidationError(
                         message=InterviewService._format_start_interview_error(inner_exc.detail)
@@ -1049,6 +1511,10 @@ class InterviewService:
             "total_questions": total_questions,
             "knowledge_base_title": knowledge_base_context["title"] if knowledge_base_context else None,
             "interview_mode": interview_mode,
+            "training_focus": interview_blueprint.get("training_focus") or [],
+            "high_risk_claims": InterviewService._blueprint_claim_strings(interview_blueprint),
+            "blueprint_evidence_summary": interview_blueprint.get("evidence_summary") or [],
+            "interview_blueprint": interview_blueprint,
         }
 
     @staticmethod
@@ -1097,43 +1563,17 @@ class InterviewService:
         )
         db.add(candidate_msg)
 
-        evaluation_mode = interview.interview_mode
-        try:
-            if interview.interview_mode == "panel":
-                evaluation = await AIService.evaluate_answer_with_panel(
-                    question=current_question,
-                    answer=answer,
-                    resume_context=parsed_resume,
-                    chat_history=chat_history,
-                    knowledge_base=knowledge_base_context,
-                    question_meta=current_question_meta,
-                    panel_snapshot=interview.panel_snapshot,
-                    ai_config=ai_config,
-                )
-            else:
-                evaluation = await AIService.evaluate_answer(
-                    question=current_question,
-                    answer=answer,
-                    resume_context=parsed_resume,
-                    chat_history=chat_history,
-                    knowledge_base=knowledge_base_context,
-                    question_meta=current_question_meta,
-                    ai_config=ai_config,
-                )
-        except Exception as exc:
-            if interview.interview_mode != "panel":
-                raise
-            logger.warning("Panel evaluation failed, fallback to single mode: %s", exc)
-            evaluation_mode = "single_fallback"
-            evaluation = await AIService.evaluate_answer(
-                question=current_question,
-                answer=answer,
-                resume_context=parsed_resume,
-                chat_history=chat_history,
-                knowledge_base=knowledge_base_context,
-                question_meta=current_question_meta,
-                ai_config=ai_config,
-            )
+        evaluation_mode, evaluation = await InterviewService._evaluate_round(
+            interview_mode=interview.interview_mode,
+            question=current_question,
+            answer=answer,
+            resume_context=parsed_resume,
+            chat_history=chat_history,
+            knowledge_base=knowledge_base_context,
+            question_meta=current_question_meta,
+            panel_snapshot=interview.panel_snapshot,
+            ai_config=ai_config,
+        )
 
         score = float(evaluation.get("score", 5.0))
         feedback = (evaluation.get("feedback") or "").strip()
@@ -1156,6 +1596,7 @@ class InterviewService:
             current_question_meta.get("selected_slices") or [],
             used_slice_ids=current_question_meta.get("used_slice_ids") or [],
         )
+        current_question_meta.update(InterviewService._derive_question_target_fields(current_question_meta))
         current_question_meta["selected_followups"] = (
             (evaluation.get("moderator") or {}).get("selected_followups")
             or evaluation.get("selected_followups")
@@ -1183,6 +1624,13 @@ class InterviewService:
             "next_question": None,
             "evidence_summary": current_question_meta.get("evidence_summary") or [],
             "used_slice_ids": current_question_meta.get("used_slice_ids") or [],
+            "question_target_gap": current_question_meta.get("question_target_gap"),
+            "question_target_evidence": current_question_meta.get("question_target_evidence") or [],
+            "question_reason": current_question_meta.get("question_reason"),
+            "evidence_strength_delta": evaluation.get("evidence_strength_delta") or [],
+            "claim_confidence_change": evaluation.get("claim_confidence_change") or [],
+            "unresolved_gaps": evaluation.get("unresolved_gaps") or [],
+            "next_best_followup": evaluation.get("next_best_followup"),
         }
 
         if is_finished:
@@ -1266,6 +1714,8 @@ class InterviewService:
             interview.current_question_index = next_index
             next_question = next_question_meta["question"]
             response["next_question"] = next_question
+            response["next_question_target_gap"] = next_question_meta.get("question_target_gap")
+            response["next_question_reason"] = next_question_meta.get("question_reason")
             db.add(
                 InterviewMessage(
                     interview_id=interview_id,

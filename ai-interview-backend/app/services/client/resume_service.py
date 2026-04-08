@@ -3,7 +3,7 @@ import logging
 import os
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -23,6 +23,31 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class ResumeService:
+    @staticmethod
+    def _build_analysis_payload(
+        analysis: Optional[Dict],
+        resume_evidence: Optional[Dict] = None,
+    ) -> Dict:
+        payload = dict(analysis or {})
+        if resume_evidence:
+            payload["resume_evidence"] = resume_evidence
+            payload["evidence_summary"] = resume_evidence.get("evidence_summary") or []
+        return payload
+
+    @staticmethod
+    def _extract_evidence_fields(analysis_payload: Optional[Dict]) -> tuple[Optional[Dict], Optional[list]]:
+        if not isinstance(analysis_payload, dict):
+            return None, None
+        resume_evidence = analysis_payload.get("resume_evidence")
+        if not isinstance(resume_evidence, dict):
+            resume_evidence = None
+        evidence_summary = analysis_payload.get("evidence_summary")
+        if not isinstance(evidence_summary, list) and resume_evidence:
+            evidence_summary = resume_evidence.get("evidence_summary")
+        if not isinstance(evidence_summary, list):
+            evidence_summary = None
+        return resume_evidence, evidence_summary
+
     @staticmethod
     async def create_resume_upload(
         db: AsyncSession,
@@ -141,14 +166,33 @@ class ResumeService:
             )
             return
 
+        await ResumeService._update_status(db, resume, "evidencing")
+        try:
+            resume_evidence = await AIService.extract_resume_evidence(
+                parsed,
+                resume.target_position or "",
+                ai_config=ai_config,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Resume evidence extraction failed for resume %s, fallback to deterministic evidence: %s",
+                resume.id,
+                exc,
+            )
+            resume_evidence = AIService.build_resume_evidence_fallback(parsed)
+
         await ResumeService._update_status(db, resume, "analyzing")
         try:
             analysis = await AIService.analyze_resume(
                 parsed,
                 resume.target_position or "",
+                resume_evidence=resume_evidence,
                 ai_config=ai_config,
             )
-            resume.analysis = json.dumps(analysis, ensure_ascii=False)
+            resume.analysis = json.dumps(
+                ResumeService._build_analysis_payload(analysis, resume_evidence),
+                ensure_ascii=False,
+            )
             resume.status = "completed"
             await db.commit()
             await db.refresh(resume)
@@ -229,11 +273,14 @@ class ResumeService:
 
         analysis = None
         error_message = None
+        resume_evidence = None
+        evidence_summary = None
         if resume.analysis:
             try:
                 analysis = json.loads(resume.analysis)
                 if isinstance(analysis, dict):
                     error_message = analysis.get("error_message")
+                    resume_evidence, evidence_summary = ResumeService._extract_evidence_fields(analysis)
             except json.JSONDecodeError:
                 analysis = None
 
@@ -244,6 +291,8 @@ class ResumeService:
             "target_position": resume.target_position,
             "parsed_content": parsed_content,
             "analysis": analysis,
+            "resume_evidence": resume_evidence,
+            "evidence_summary": evidence_summary,
             "error_message": error_message,
             "created_at": resume.created_at.isoformat() if resume.created_at else None,
         }

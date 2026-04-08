@@ -1,1 +1,0 @@
-import{l as r}from"./index-xVxjwWnT.js";function n(t){return r.post("/auth/register",t)}function o(t,i="registration"){return r.post("/auth/send-verification-code",{email:t,code_type:i})}function a(t,i){return r.post("/auth/verify-email",{email:t,code:i})}function s(t,i){return r.post("/auth/login",{email:t,password:i})}export{s as l,n as r,o as s,a as v};

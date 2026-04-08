@@ -48,6 +48,27 @@
         </ul>
       </div>
 
+      <div v-if="report.common_strengths?.length" class="card section-card">
+        <h3>高频补强证据</h3>
+        <ul class="panel-list">
+          <li v-for="(item, i) in report.common_strengths" :key="`strength-${i}`">{{ formatInsightItem(item) }}</li>
+        </ul>
+      </div>
+
+      <div v-if="report.followup_loop_summary?.length" class="card section-card">
+        <h3>追问闭环摘要</h3>
+        <ul class="panel-list">
+          <li v-for="(item, i) in report.followup_loop_summary" :key="`loop-${i}`">{{ formatInsightItem(item) }}</li>
+        </ul>
+      </div>
+
+      <div v-if="report.claim_confidence_summary?.length" class="card section-card">
+        <h3>高风险表述变化</h3>
+        <ul class="panel-list">
+          <li v-for="(item, i) in report.claim_confidence_summary" :key="`claim-${i}`">{{ formatInsightItem(item) }}</li>
+        </ul>
+      </div>
+
       <div v-if="report.evidence_summary?.length" class="card section-card">
         <h3>训练依据</h3>
         <ul class="panel-list">

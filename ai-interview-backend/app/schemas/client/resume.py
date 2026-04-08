@@ -16,5 +16,7 @@ class ResumeDetail(BaseSchema):
     target_position: Optional[str] = None
     parsed_content: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
+    resume_evidence: Optional[Dict[str, Any]] = None
+    evidence_summary: Optional[list[str]] = None
     error_message: Optional[str] = None
     created_at: Optional[str] = None

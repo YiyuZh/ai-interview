@@ -42,6 +42,28 @@
       </router-link>
     </div>
 
+    <div v-if="!preparing && hasBlueprintCard" class="blueprint-card">
+      <div class="blueprint-card-top">
+        <div>
+          <strong>当前训练重点</strong>
+          <p class="blueprint-card-note">首轮提问和后续追问会优先围绕这些缺口与高风险点展开。</p>
+        </div>
+        <span class="blueprint-mode-chip">{{ interviewModeLabel }}</span>
+      </div>
+      <ul v-if="trainingFocus.length" class="blueprint-list">
+        <li v-for="item in trainingFocus" :key="`focus-${item}`">{{ item }}</li>
+      </ul>
+      <div v-if="highRiskClaims.length" class="blueprint-risk-block">
+        <p class="blueprint-subtitle">当前高风险点</p>
+        <ul class="blueprint-list compact">
+          <li v-for="item in highRiskClaims" :key="`risk-${item}`">{{ item }}</li>
+        </ul>
+      </div>
+      <p v-if="blueprintEvidenceSummary.length" class="blueprint-evidence">
+        证据摘要：{{ blueprintEvidenceSummary.join('；') }}
+      </p>
+    </div>
+
     <div v-if="!preparing && isPanelMode" class="panel-status-card">
       <div class="panel-status-top">
         <div>
@@ -64,6 +86,85 @@
           <li v-for="(item, index) in latestRoundSummary.points" :key="`${item}-${index}`">{{ item }}</li>
         </ul>
       </details>
+    </div>
+
+    <div v-if="!preparing && latestRoundSummary" class="round-loop-card">
+      <div class="round-loop-top">
+        <div>
+          <strong>本轮证据闭环</strong>
+          <p class="round-loop-note">
+            当前轮会明确记录这道题在验证什么证据、暴露了什么缺口，以及下一步最值得追问的方向。
+          </p>
+        </div>
+        <span class="round-loop-chip">{{ latestRoundSummary.modeLabel }}</span>
+      </div>
+      <p v-if="latestRoundSummary.questionReason" class="round-loop-feedback">
+        {{ latestRoundSummary.questionReason }}
+      </p>
+      <div class="round-loop-grid">
+        <div v-if="latestRoundSummary.questionTargetGap" class="round-loop-block">
+          <p class="round-loop-title">当前验证缺口</p>
+          <p class="round-loop-text">{{ latestRoundSummary.questionTargetGap }}</p>
+        </div>
+        <div v-if="latestRoundSummary.questionTargetEvidence.length" class="round-loop-block">
+          <p class="round-loop-title">当前证据目标</p>
+          <ul class="round-loop-list">
+            <li
+              v-for="(item, index) in latestRoundSummary.questionTargetEvidence"
+              :key="`question-target-${item}-${index}`"
+            >
+              {{ item }}
+            </li>
+          </ul>
+        </div>
+        <div v-if="latestRoundSummary.unresolvedGaps.length" class="round-loop-block">
+          <p class="round-loop-title">仍待澄清</p>
+          <ul class="round-loop-list">
+            <li v-for="(item, index) in latestRoundSummary.unresolvedGaps" :key="`gap-${item}-${index}`">
+              {{ item }}
+            </li>
+          </ul>
+        </div>
+        <div v-if="latestRoundSummary.evidenceStrengthDelta.length" class="round-loop-block">
+          <p class="round-loop-title">证据强度变化</p>
+          <ul class="round-loop-list">
+            <li
+              v-for="(item, index) in latestRoundSummary.evidenceStrengthDelta"
+              :key="`delta-${index}`"
+            >
+              {{ item.evidence }}：{{ formatDeltaLabel(item.delta) }}
+              <span v-if="item.reason" class="round-loop-inline-note">（{{ item.reason }}）</span>
+            </li>
+          </ul>
+        </div>
+        <div v-if="latestRoundSummary.claimConfidenceChange.length" class="round-loop-block">
+          <p class="round-loop-title">高风险表述置信度</p>
+          <ul class="round-loop-list">
+            <li
+              v-for="(item, index) in latestRoundSummary.claimConfidenceChange"
+              :key="`claim-${index}`"
+            >
+              {{ item.claim }}：{{ item.from_level || 'unknown' }} -> {{ item.to_level || 'unknown' }}
+            </li>
+          </ul>
+        </div>
+        <div v-if="latestRoundSummary.nextBestFollowup" class="round-loop-block">
+          <p class="round-loop-title">下一步最佳追问</p>
+          <p class="round-loop-text">{{ latestRoundSummary.nextBestFollowup.question }}</p>
+          <p v-if="latestRoundSummary.nextBestFollowup.reason" class="round-loop-inline-note">
+            {{ latestRoundSummary.nextBestFollowup.reason }}
+          </p>
+          <p
+            v-if="latestRoundSummary.nextBestFollowup.evidenceSourceSummary?.length"
+            class="round-loop-inline-note"
+          >
+            证据来源：{{ latestRoundSummary.nextBestFollowup.evidenceSourceSummary.join('；') }}
+          </p>
+        </div>
+      </div>
+      <ul v-if="latestRoundSummary.points.length" class="round-summary-list compact">
+        <li v-for="(item, index) in latestRoundSummary.points" :key="`round-point-${index}`">{{ item }}</li>
+      </ul>
     </div>
 
     <div v-if="!preparing" ref="chatArea" class="chat-area">
@@ -196,6 +297,24 @@ const userInitial = computed(() => {
 })
 const interviewMode = computed(() => interviewMeta.value?.interviewMode || route.query.mode || 'single')
 const isPanelMode = computed(() => interviewMode.value === 'panel')
+const trainingFocus = computed(() => {
+  const items = interviewMeta.value?.trainingFocus
+  return Array.isArray(items) ? items.slice(0, 3) : []
+})
+const highRiskClaims = computed(() => {
+  const items = interviewMeta.value?.highRiskClaims
+  return Array.isArray(items) ? items.slice(0, 3) : []
+})
+const blueprintEvidenceSummary = computed(() => {
+  const items = interviewMeta.value?.blueprintEvidenceSummary
+  return Array.isArray(items) ? items.slice(0, 3) : []
+})
+const hasBlueprintCard = computed(() => {
+  return trainingFocus.value.length || highRiskClaims.value.length || blueprintEvidenceSummary.value.length
+})
+const interviewModeLabel = computed(() => {
+  return interviewMode.value === 'panel' ? '多面试官协同' : '单面试官模式'
+})
 
 function loadInterviewMeta() {
   const storageKey = `interview_meta_${interviewId}`
@@ -220,13 +339,20 @@ function loadInterviewMeta() {
 }
 
 function normalizeRoundSummary(data) {
-  if (!data || !isPanelMode.value) return null
+  if (!data) return null
 
   const moderator = data.moderator || {}
   const metadata = data.metadata || {}
   const panelViews = Array.isArray(data.panel_views) ? data.panel_views : []
   const followups = moderator.selected_followups || data.selected_followups || []
   const sliceIds = metadata.retrieved_slice_ids || data.used_slice_ids || []
+  const roundEvidenceSummary = Array.isArray(data.evidence_summary) ? data.evidence_summary : []
+  const unresolvedGaps = Array.isArray(data.unresolved_gaps) ? data.unresolved_gaps : []
+  const evidenceStrengthDelta = Array.isArray(data.evidence_strength_delta) ? data.evidence_strength_delta : []
+  const claimConfidenceChange = Array.isArray(data.claim_confidence_change) ? data.claim_confidence_change : []
+  const questionTargetEvidence = Array.isArray(data.question_target_evidence) ? data.question_target_evidence : []
+  const nextBestFollowup =
+    data.next_best_followup && typeof data.next_best_followup === 'object' ? data.next_best_followup : null
   const points = []
 
   panelViews.slice(0, 3).forEach(item => {
@@ -244,14 +370,37 @@ function normalizeRoundSummary(data) {
   evidenceSummary.slice(0, 2).forEach(item => {
     if (item) points.push(`训练依据：${item}`)
   })
+  if (nextBestFollowup?.question) {
+    points.push(`下一步：${nextBestFollowup.question}`)
+  }
   if (!points.length) {
     points.push('本轮回答已完成多视角内部评估，结果会汇总到最终报告。')
   }
 
   return {
     feedback: data.feedback || moderator.reasoning_summary || '',
+    modeLabel: isPanelMode.value ? '证据追问闭环' : '单面试官闭环',
+    questionTargetGap: data.question_target_gap || '',
+    questionTargetEvidence: questionTargetEvidence.slice(0, 4),
+    questionReason: data.question_reason || '',
+    unresolvedGaps: unresolvedGaps.slice(0, 4),
+    evidenceStrengthDelta: evidenceStrengthDelta.slice(0, 4),
+    claimConfidenceChange: claimConfidenceChange.slice(0, 3),
+    nextBestFollowup,
+    blueprintEvidenceSummary: roundEvidenceSummary.slice(0, 2),
     points
   }
+}
+
+function formatDeltaLabel(delta) {
+  const map = {
+    strengthened: '已补强',
+    increased: '明显增强',
+    weakened: '仍然偏弱',
+    insufficient: '证据不足',
+    unchanged: '变化有限'
+  }
+  return map[delta] || delta || '变化有限'
 }
 
 function renderContent(text) {
@@ -470,6 +619,70 @@ async function handleSubmit() {
   font-weight: 400;
 }
 
+.blueprint-card {
+  margin: 16px 20px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+}
+
+.blueprint-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.blueprint-card-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #6b7280;
+}
+
+.blueprint-mode-chip {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #ecfeff;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.blueprint-list {
+  margin: 12px 0 0 18px;
+  padding: 0;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.blueprint-list.compact {
+  margin-top: 8px;
+}
+
+.blueprint-risk-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eef2ff;
+}
+
+.blueprint-subtitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #312e81;
+}
+
+.blueprint-evidence {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #6b7280;
+}
+
 .panel-status-card {
   margin: 16px 20px 0;
   padding: 14px 16px;
@@ -558,6 +771,93 @@ async function handleSubmit() {
   position: absolute;
   left: 0;
   color: #6d28d9;
+}
+
+.round-summary-list.compact {
+  margin-top: 14px;
+}
+
+.round-loop-card {
+  margin: 16px 20px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.08), rgba(79, 70, 229, 0.06));
+  border: 1px solid rgba(14, 165, 233, 0.16);
+}
+
+.round-loop-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.round-loop-note {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4b5563;
+}
+
+.round-loop-chip {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.round-loop-feedback {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #1f2937;
+}
+
+.round-loop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.round-loop-block {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(14, 165, 233, 0.12);
+}
+
+.round-loop-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.round-loop-text {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.round-loop-list {
+  margin: 8px 0 0 16px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #374151;
+}
+
+.round-loop-inline-note {
+  margin-top: 6px;
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #6b7280;
 }
 
 .chat-area {

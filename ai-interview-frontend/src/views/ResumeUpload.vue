@@ -143,6 +143,36 @@
           </div>
         </div>
 
+        <div v-if="hasEvidenceCard" class="card evidence-card" style="margin-bottom:20px">
+          <h3 style="margin-bottom:12px">🧩 简历证据摘要</h3>
+          <p class="evidence-desc">
+            这部分会作为后续出题、追问和判断“证据是否充分”的参考依据。若证据不足，系统会优先提示追问而不是强行下结论。
+          </p>
+          <div class="tag-list evidence-stat-tags">
+            <span v-if="resumeEvidence?.projects?.length" class="tag evidence-stat-tag">项目证据 {{ resumeEvidence.projects.length }}</span>
+            <span v-if="resumeEvidence?.skills?.length" class="tag evidence-stat-tag">技能证据 {{ resumeEvidence.skills.length }}</span>
+            <span v-if="resumeEvidence?.metrics?.length" class="tag evidence-stat-tag">指标证据 {{ resumeEvidence.metrics.length }}</span>
+          </div>
+          <div class="analysis-section" v-if="evidenceSummary.length">
+            <h4>证据摘要</h4>
+            <ul><li v-for="(item, index) in evidenceSummary" :key="index">{{ item }}</li></ul>
+          </div>
+          <div class="analysis-two-col">
+            <div v-if="resumeEvidence?.ambiguity_flags?.length">
+              <h4 style="color:#b45309;margin-bottom:8px">⚠️ 模糊表述风险</h4>
+              <ul><li v-for="(item, index) in resumeEvidence.ambiguity_flags.slice(0, 4)" :key="index">{{ item }}</li></ul>
+            </div>
+            <div v-if="resumeEvidence?.missing_evidence_flags?.length">
+              <h4 style="color:#dc2626;margin-bottom:8px">🕳️ 缺证据点</h4>
+              <ul><li v-for="(item, index) in resumeEvidence.missing_evidence_flags.slice(0, 4)" :key="index">{{ item }}</li></ul>
+            </div>
+          </div>
+          <div class="analysis-section" v-if="resumeEvidence?.followup_candidates?.length">
+            <h4>建议追问点</h4>
+            <ul><li v-for="(item, index) in resumeEvidence.followup_candidates.slice(0, 4)" :key="index">{{ item }}</li></ul>
+          </div>
+        </div>
+
         <div class="card knowledge-card" style="margin-bottom:20px">
           <div class="knowledge-header">
             <div>
@@ -291,6 +321,8 @@ const error = ref('')
 const resumeId = ref(null)
 const parsedContent = ref(null)
 const analysis = ref(null)
+const resumeEvidence = ref(null)
+const evidenceSummary = ref([])
 const knowledgeLoading = ref(false)
 const knowledgeBases = ref([])
 const selectedKnowledgeBaseId = ref('')
@@ -335,6 +367,18 @@ const activeAiModelOptions = computed(() => aiProviderModelOptions[aiTestProvide
 const aiTestModelPlaceholder = computed(() => aiProviderDefaults[aiTestProvider.value]?.model || '')
 const currentAiModelDisplay = computed(() => aiTestModel.value?.trim() || aiTestModelPlaceholder.value || '未选择模型')
 const startErrorTips = computed(() => buildStartErrorTips(error.value))
+const hasEvidenceCard = computed(() => {
+  if (evidenceSummary.value.length) return true
+  const payload = resumeEvidence.value || {}
+  return [
+    payload.projects,
+    payload.skills,
+    payload.metrics,
+    payload.ambiguity_flags,
+    payload.missing_evidence_flags,
+    payload.followup_candidates
+  ].some(item => Array.isArray(item) && item.length > 0)
+})
 
 const selectedKnowledgeBase = computed(() => {
   const id = Number(selectedKnowledgeBaseId.value)
@@ -381,6 +425,7 @@ const resumeStatusMeta = {
   queued: { progress: 12, title: '简历已上传，正在进入解析队列...' },
   extracting: { progress: 32, title: '正在提取 PDF 文本内容...' },
   parsing: { progress: 58, title: 'AI 正在结构化解析简历...' },
+  evidencing: { progress: 72, title: '正在整理简历证据层...' },
   analyzing: { progress: 82, title: 'AI 正在生成简历分析报告...' },
   completed: { progress: 100, title: '解析完成，正在准备结果...' },
   failed: { progress: 100, title: '解析失败，正在返回结果...' }
@@ -550,6 +595,8 @@ async function handleTestAiConnection() {
 async function handleUpload() {
   error.value = ''
   uploading.value = true
+  resumeEvidence.value = null
+  evidenceSummary.value = []
   try {
     await getProfile()
 
@@ -573,6 +620,8 @@ async function handleUpload() {
       if (detail.status === 'completed') {
         parsedContent.value = detail.parsed_content
         analysis.value = detail.analysis
+        resumeEvidence.value = detail.resume_evidence || detail.analysis?.resume_evidence || null
+        evidenceSummary.value = detail.evidence_summary || resumeEvidence.value?.evidence_summary || []
         await loadKnowledgeBases()
         // 完成动画
         progress.value = 100
@@ -661,13 +710,28 @@ function stopStartingAnimation() {
 }
 
 function cacheInterviewMeta(interviewId, data) {
+  const blueprint = data?.interview_blueprint || {}
+  const highRiskClaims = Array.isArray(data?.high_risk_claims)
+    ? data.high_risk_claims
+    : Array.isArray(blueprint?.high_risk_claims)
+      ? blueprint.high_risk_claims
+          .map(item => (typeof item === 'object' && item ? item.claim : item))
+          .filter(Boolean)
+      : []
   const meta = {
     interviewId,
     interviewMode: data?.interview_mode || (multiInterviewerEnabled.value ? 'panel' : 'single'),
     totalQuestions: data?.total_questions || totalQuestions.value,
     knowledgeBaseTitle: data?.knowledge_base_title || selectedKnowledgeBase.value?.title || '',
     targetPosition: targetPosition.value,
-    multiInterviewerEnabled: !!multiInterviewerEnabled.value
+    multiInterviewerEnabled: !!multiInterviewerEnabled.value,
+    trainingFocus: Array.isArray(data?.training_focus)
+      ? data.training_focus
+      : (Array.isArray(blueprint?.training_focus) ? blueprint.training_focus : []),
+    highRiskClaims,
+    blueprintEvidenceSummary: Array.isArray(data?.blueprint_evidence_summary)
+      ? data.blueprint_evidence_summary
+      : (Array.isArray(blueprint?.evidence_summary) ? blueprint.evidence_summary : [])
   }
   sessionStorage.setItem(`interview_meta_${interviewId}`, JSON.stringify(meta))
   return meta
@@ -868,6 +932,20 @@ async function handleStart() {
 
 /* 分析报告 */
 .analysis-card { border: 1px solid #e5e7eb; }
+.evidence-card { border: 1px solid #e5e7eb; background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); }
+.evidence-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #6b7280;
+  margin-bottom: 12px;
+}
+.evidence-stat-tags {
+  margin-bottom: 14px;
+}
+.evidence-stat-tag {
+  background: #eef2ff;
+  color: #4338ca;
+}
 .analysis-score { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .score-badge {
   width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center;
