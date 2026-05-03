@@ -3,6 +3,9 @@ services:
     build:
       context: ./ai-interview-backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
     image: ai-interview-backend:prod
     container_name: ai-interview-app
     restart: unless-stopped
@@ -87,6 +90,9 @@ services:
     build:
       context: ./ai-interview-backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
     image: ai-interview-backend:prod
     container_name: ai-interview-celery-worker
     restart: unless-stopped
@@ -112,6 +118,9 @@ services:
     build:
       context: ./ai-interview-backend
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
     image: ai-interview-backend:prod
     container_name: ai-interview-celery-beat
     restart: unless-stopped

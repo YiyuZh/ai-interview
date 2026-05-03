@@ -2,21 +2,27 @@
   <div id="app">
     <nav class="navbar" v-if="authStore.token">
       <div class="nav-content">
-        <router-link to="/dashboard" class="nav-logo">🎯 智面</router-link>
+        <router-link to="/dashboard" class="nav-logo">职启智评</router-link>
         <div class="nav-links">
-          <router-link to="/dashboard">面试记录</router-link>
-          <router-link to="/knowledge-base">岗位知识库</router-link>
-          <router-link to="/resume/upload">上传简历</router-link>
+          <router-link to="/dashboard">工作台</router-link>
+          <router-link to="/competition-demo">参赛演示</router-link>
+          <router-link to="/knowledge-base">岗位画像库</router-link>
+          <router-link to="/resume/upload">简历分析</router-link>
           <router-link to="/profile" class="nav-user-link">
             <img v-if="authStore.userAvatar && !avatarError" :src="authStore.userAvatar" class="nav-avatar" alt="avatar" @error="avatarError = true" />
             <span v-else class="nav-avatar-placeholder">👤</span>
-            <span>{{ authStore.userName || '个人中心' }}</span>
+            <span>{{ authStore.userName || '个人设置' }}</span>
           </router-link>
           <button class="btn-secondary" @click="logout" style="padding:6px 14px;font-size:13px">退出</button>
         </div>
       </div>
     </nav>
     <router-view />
+    <footer class="icp-footer" aria-label="ICP备案信息">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer noopener">
+        粤ICP备2026047626号
+      </a>
+    </footer>
   </div>
 </template>
 
@@ -110,5 +116,18 @@ function logout() {
   align-items: center;
   justify-content: center;
   font-size: 14px;
+}
+.icp-footer {
+  padding: 18px 20px 28px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 12px;
+}
+.icp-footer a {
+  color: inherit;
+  font-weight: 600;
+}
+.icp-footer a:hover {
+  color: #4f46e5;
 }
 </style>

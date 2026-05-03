@@ -25,7 +25,7 @@ def handle_db_exceptions(func):
                 referenced_table = extract_referenced_table(error_msg)
                 if referenced_table:
                     raise ForeignKeyViolationError(
-                        message=f"该记录已关联其他资源，请先将其标记为"停用"以对用户隐藏"
+                        message='该记录已关联其他资源，请先将其标记为"停用"以对用户隐藏'
                     )
                 else:
                     raise ForeignKeyViolationError()

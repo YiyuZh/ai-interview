@@ -1,8 +1,8 @@
 <template>
   <div class="auth-page">
     <div class="auth-card">
-      <h2>🎯 注册智面</h2>
-      <p v-if="!verificationStep" class="subtitle">创建账号开始 AI 模拟面试</p>
+      <h2>注册职启智评</h2>
+      <p v-if="!verificationStep" class="subtitle">创建账号开始简历诊断、岗位匹配与模拟面试</p>
       <p v-else class="subtitle">请输入发送到邮箱的 6 位验证码，完成注册</p>
 
       <form v-if="!verificationStep" @submit.prevent="handleRegister">

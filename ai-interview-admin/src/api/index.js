@@ -1,4 +1,4 @@
-import api from './request'
+import api, { downloadApi } from './request'
 
 export const authApi = {
   login: (email, password) => api.post('/auth/login', { email, password }),
@@ -14,6 +14,10 @@ export const userApi = {
 export const interviewApi = {
   list: (params) => api.get('/interviews', { params }),
   detail: (id) => api.get(`/interviews/${id}`),
+  trainingSample: (id, params) => api.get(`/interviews/${id}/training-sample`, { params }),
+  updateTrainingReview: (id, data) => api.put(`/interviews/${id}/training-sample-review`, data),
+  evaluationDatasetPreview: (params) => api.get('/interviews/evaluation-datasets/preview', { params }),
+  exportEvaluationDatasets: (params) => downloadApi.get('/interviews/evaluation-datasets/export', { params }),
   delete: (id) => api.delete(`/interviews/${id}`)
 }
 

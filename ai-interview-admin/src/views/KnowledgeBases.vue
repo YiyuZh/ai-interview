@@ -2,53 +2,53 @@
   <div>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px">
       <div>
-        <h1 style="font-size:20px;margin-bottom:8px">🧠 公共知识库</h1>
+        <h1 style="font-size:20px;margin-bottom:8px">公共岗位画像库</h1>
         <p style="color:#6b7280;font-size:14px;line-height:1.7">
-          这里维护的是后台公共知识库。普通用户可以直接使用这些知识库，但不能编辑它们。
+          这里维护参赛演示和真实面试都可复用的公共岗位画像。技术岗可维护八股知识点，非技术岗可维护任务场景和能力要求。
         </p>
       </div>
-      <button class="btn-primary" @click="startCreate">{{ editingId ? '新建一份' : '+ 新建公共知识库' }}</button>
+      <button class="btn-primary" @click="startCreate">{{ editingId ? '新建一份' : '+ 新建公共岗位画像' }}</button>
     </div>
 
     <div class="kb-layout">
       <div class="card">
-        <h3 style="margin-bottom:16px">{{ editingId ? '编辑公共知识库' : '新建公共知识库' }}</h3>
+        <h3 style="margin-bottom:16px">{{ editingId ? '编辑公共岗位画像' : '新建公共岗位画像' }}</h3>
 
         <div class="form-group">
           <label>标题</label>
-          <input v-model="form.title" placeholder="例如：Java 后端面试高频题库" />
+          <input v-model="form.title" placeholder="例如：Python后端开发工程师岗位画像" />
         </div>
 
         <div class="form-group">
           <label>目标岗位</label>
-          <input v-model="form.target_position" placeholder="例如：Java后端开发工程师" />
+          <input v-model="form.target_position" placeholder="例如：Python后端开发工程师" />
         </div>
 
         <div class="form-group">
-          <label>知识内容</label>
-          <textarea v-model="form.knowledge_content" rows="9" placeholder="写岗位核心知识点、常见场景、常问原理、典型技术栈" />
+          <label>岗位画像内容</label>
+          <textarea v-model="form.knowledge_content" rows="9" placeholder="写岗位核心能力、典型任务、关键词、常见工作场景和能力要求" />
         </div>
 
         <div class="form-group">
-          <label>重点训练方向</label>
-          <textarea v-model="form.focus_points" rows="5" placeholder="例如：重点追问缓存一致性、事务、索引原理、系统设计" />
+          <label>重点测评方向</label>
+          <textarea v-model="form.focus_points" rows="5" placeholder="例如：技术岗追问语言基础、数据库、Redis、HTTP、并发、系统设计；职能岗追问流程、数据、沟通和复盘" />
         </div>
 
         <div class="form-group">
           <label>额外面试官要求</label>
-          <textarea v-model="form.interviewer_prompt" rows="4" placeholder="例如：多问项目落地，不要停留在纯八股" />
+          <textarea v-model="form.interviewer_prompt" rows="4" placeholder="例如：回答模糊时继续追问证据，最终建议必须具体可执行" />
         </div>
 
         <label class="switch-row">
           <input v-model="form.is_active" type="checkbox" />
-          <span>启用这份公共知识库</span>
+          <span>启用这份公共岗位画像</span>
         </label>
 
         <p v-if="msg" :class="msg.startsWith('✅') ? 'success-text' : 'error-text'">{{ msg }}</p>
 
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="btn-primary" @click="handleSubmit" :disabled="saving">
-            {{ saving ? '保存中...' : (editingId ? '保存修改' : '创建公共知识库') }}
+            {{ saving ? '保存中...' : (editingId ? '保存修改' : '创建公共岗位画像') }}
           </button>
           <button v-if="editingId" class="btn-sm" @click="resetForm">取消编辑</button>
         </div>
@@ -57,7 +57,7 @@
       <div>
         <div class="card" style="margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-            <h3>公共知识库列表</h3>
+            <h3>公共岗位画像列表</h3>
             <input v-model="keyword" placeholder="按标题 / 岗位筛选" style="width:260px" />
           </div>
         </div>
@@ -65,7 +65,7 @@
         <div v-if="loading" class="card empty-card">加载中...</div>
 
         <div v-else-if="filteredItems.length === 0" class="card empty-card">
-          还没有公共知识库。
+          还没有公共岗位画像。
         </div>
 
         <div v-else class="kb-list">
@@ -82,7 +82,7 @@
 
             <p class="kb-preview">{{ item.preview }}</p>
 
-            <p v-if="item.focus_points" class="kb-extra"><strong>训练重点：</strong>{{ item.focus_points }}</p>
+            <p v-if="item.focus_points" class="kb-extra"><strong>测评重点：</strong>{{ item.focus_points }}</p>
             <p v-if="item.interviewer_prompt" class="kb-extra"><strong>面试官要求：</strong>{{ item.interviewer_prompt }}</p>
 
             <div class="kb-footer">
@@ -176,7 +176,7 @@ function handleEdit(item) {
 async function handleSubmit() {
   msg.value = ''
   if (!form.value.title.trim() || !form.value.target_position.trim() || !form.value.knowledge_content.trim()) {
-    msg.value = '标题、目标岗位和知识内容不能为空'
+    msg.value = '标题、目标岗位和画像内容不能为空'
     return
   }
 
@@ -194,12 +194,12 @@ async function handleSubmit() {
     if (editingId.value) {
       await knowledgeBaseApi.update(editingId.value, payload)
       await loadItems()
-      msg.value = '✅ 公共知识库已更新'
+      msg.value = '✅ 公共岗位画像已更新'
     } else {
       await knowledgeBaseApi.create(payload)
       await loadItems()
       resetForm()
-      msg.value = '✅ 公共知识库已创建'
+      msg.value = '✅ 公共岗位画像已创建'
     }
   } catch (e) {
     msg.value = e.message

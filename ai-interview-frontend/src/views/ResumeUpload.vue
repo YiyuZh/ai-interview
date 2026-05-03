@@ -1,7 +1,7 @@
 <template>
   <div class="container">
     <div class="card" style="max-width:600px;margin:40px auto">
-      <h2 style="margin-bottom:20px">📄 上传简历 & 开始面试</h2>
+      <h2 style="margin-bottom:20px">简历分析与岗位模拟面试</h2>
 
       <!-- Step 1: 上传简历 -->
       <div v-if="step === 1">
@@ -15,12 +15,12 @@
         </div>
         <div class="form-group">
           <label>目标岗位</label>
-          <input v-model="targetPosition" placeholder="例如：Python后端开发工程师" />
+          <input v-model="targetPosition" placeholder="例如：Python后端开发工程师 / 前端开发工程师 / 产品助理 / 人力资源专员" />
         </div>
         <div class="card api-test-card" style="margin-bottom:16px">
           <div class="api-test-head">
             <div>
-              <h3 style="margin-bottom:8px">选择本次 AI</h3>
+              <h3 style="margin-bottom:8px">选择本次测评 AI</h3>
               <p class="api-test-desc">
                 开始解析简历前，先选择这一次要使用的 AI 服务商和模型。你可以先检测连接是否成功，确认无误后再开始解析。
               </p>
@@ -69,7 +69,7 @@
             本次解析将使用：{{ activeAiProviderLabel }} / {{ currentAiModelDisplay }}
           </p>
           <p class="api-test-usage-note">
-            当前这里选中的服务商和模型，会用于这一次简历解析；但不会修改你个人中心里保存的默认配置。
+            当前这里选中的服务商和模型，会用于这一次简历解析；但不会修改你个人设置里保存的默认配置。
           </p>
         </div>
         <p v-if="error" class="error">{{ error }}</p>
@@ -107,12 +107,34 @@
 
         <!-- 简历分析报告 -->
         <div v-if="analysis" class="card analysis-card" style="margin-bottom:20px">
-          <h3 style="margin-bottom:14px">📊 简历分析报告</h3>
+          <h3 style="margin-bottom:14px">简历与岗位匹配报告</h3>
           <div class="analysis-score" v-if="analysis.overall_score">
             <div class="score-badge" :style="{ background: scoreColor(analysis.overall_score) }">
               {{ analysis.overall_score }}
             </div>
             <span class="score-text">简历综合评分</span>
+          </div>
+          <div v-if="matchingMetrics" class="matching-metrics">
+            <div class="metric-item">
+              <strong>{{ percentText(matchingMetrics.keyword_coverage?.score) }}</strong>
+              <span>关键词覆盖率</span>
+            </div>
+            <div class="metric-item">
+              <strong>{{ matchingMetrics.semantic_score ?? '-' }}</strong>
+              <span>TF-IDF 语义分</span>
+            </div>
+            <div class="metric-item">
+              <strong>{{ matchingMetrics.rule_score ?? '-' }}</strong>
+              <span>规则评分</span>
+            </div>
+            <div class="metric-item final">
+              <strong>{{ matchingMetrics.final_score ?? '-' }}</strong>
+              <span>最终匹配分</span>
+            </div>
+          </div>
+          <div v-if="matchingMetrics?.evidence_basis?.length" class="analysis-section">
+            <h4>可解释匹配依据</h4>
+            <ul><li v-for="(item, i) in matchingMetrics.evidence_basis" :key="i">{{ item }}</li></ul>
           </div>
           <p v-if="analysis.summary" class="analysis-summary">{{ analysis.summary }}</p>
           <div class="analysis-section" v-if="analysis.keyword_match?.length">
@@ -176,23 +198,23 @@
         <div class="card knowledge-card" style="margin-bottom:20px">
           <div class="knowledge-header">
             <div>
-              <h3 style="margin-bottom:8px">🧠 岗位知识库增强</h3>
+              <h3 style="margin-bottom:8px">岗位画像库增强</h3>
               <p class="knowledge-desc">
-                可选：选择你为目标岗位整理的知识库，让 AI 面试官更贴近你真正想训练的考点和追问方向。
+                可选：选择目标岗位画像，让系统按岗位能力要求、评分规则和证据线索生成更贴近求职场景的问题。
               </p>
             </div>
             <router-link to="/knowledge-base" class="btn-secondary" style="display:inline-block;padding:8px 14px;border-radius:8px">
-              管理知识库
+              管理岗位画像
             </router-link>
           </div>
 
-          <div v-if="knowledgeLoading" class="knowledge-loading">正在加载知识库...</div>
+          <div v-if="knowledgeLoading" class="knowledge-loading">正在加载岗位画像...</div>
 
           <template v-else>
             <div class="form-group">
-              <label>选择要注入的岗位知识库</label>
+              <label>选择要注入的岗位画像</label>
               <select v-model="selectedKnowledgeBaseId">
-                <option value="">不使用知识库（默认按简历与岗位出题）</option>
+                <option value="">不使用岗位画像（默认按简历与岗位出题）</option>
                 <option
                   v-for="item in knowledgeBaseOptions"
                   :key="item.knowledge_base_id"
@@ -204,7 +226,7 @@
             </div>
 
             <p v-if="knowledgeBaseOptions.length === 0" class="knowledge-empty">
-              你还没有创建岗位知识库。建议先整理一份目标岗位的核心知识点，训练效果会更稳定。
+              你还没有创建岗位画像。建议先整理一份目标岗位的核心能力、任务和评分重点，测评效果会更稳定。
             </p>
 
             <div v-else-if="selectedKnowledgeBase" class="knowledge-preview">
@@ -227,11 +249,11 @@
         </div>
 
         <div class="form-group">
-          <label>面试难度</label>
+          <label>测评难度</label>
           <select v-model="difficulty">
-            <option value="easy">简单 - 基础知识</option>
-            <option value="medium">中等 - 技术深度</option>
-            <option value="hard">困难 - 系统设计</option>
+            <option value="easy">简单 - 基础求职准备</option>
+            <option value="medium">中等 - 岗位能力追问</option>
+            <option value="hard">困难 - 压力场景与综合判断</option>
           </select>
         </div>
         <div class="form-group">
@@ -246,8 +268,8 @@
           <label class="panel-mode-toggle">
             <input v-model="multiInterviewerEnabled" type="checkbox" />
             <span>
-              <strong>多面试官协同模式（第一阶段）</strong>
-              <small>内部由多个训练角色协同出题和评估，对外仍只显示一个主持人，不改变当前交互形态。</small>
+              <strong>多角色协同评估模式</strong>
+              <small>内部由岗位面试官、就业指导老师和证据核查视角协同出题和评估，对外仍显示一个主持人。</small>
             </span>
           </label>
           <div v-if="multiInterviewerEnabled" class="panel-mode-preview">
@@ -258,7 +280,7 @@
               </div>
             </div>
             <p class="panel-preview-note">
-              外部仍然是单主持人面试流程；内部会额外综合多个训练视角做选题、追问和评估。
+              外部仍然是单主持人流程；内部会综合岗位画像、岗位知识点、简历证据、表达逻辑和改进潜力做选题与追问。
             </p>
           </div>
         </div>
@@ -267,7 +289,7 @@
           <li v-for="tip in startErrorTips" :key="tip">{{ tip }}</li>
         </ul>
         <button class="btn-primary" style="width:100%" @click="handleStart" :disabled="starting">
-          {{ starting ? '生成面试题中...' : '🚀 开始面试' }}
+          {{ starting ? '生成测评题中...' : '开始模拟面试' }}
         </button>
       </div>
 
@@ -326,7 +348,7 @@ const evidenceSummary = ref([])
 const knowledgeLoading = ref(false)
 const knowledgeBases = ref([])
 const selectedKnowledgeBaseId = ref('')
-const panelRoleHints = ['技术深挖', '项目追问', '业务场景', '表达结构', '压力质询']
+const panelRoleHints = ['岗位知识点', '项目追问', '沟通表达', '证据核查', '改进建议']
 
 const aiProviderOptions = [
   { value: 'deepseek', label: 'DeepSeek' },
@@ -380,6 +402,8 @@ const hasEvidenceCard = computed(() => {
   ].some(item => Array.isArray(item) && item.length > 0)
 })
 
+const matchingMetrics = computed(() => analysis.value?.matching_metrics || null)
+
 const selectedKnowledgeBase = computed(() => {
   const id = Number(selectedKnowledgeBaseId.value)
   if (!id) return null
@@ -408,15 +432,15 @@ const tips = [
   '回答问题时用 STAR 法则：情境、任务、行动、结果',
   '不会的问题坦诚说不会，展示学习意愿比硬编更好',
   '准备好自我介绍，控制在1-2分钟',
-  '技术面试中，思路比答案更重要',
-  '项目经验要突出你的贡献和技术选型理由',
-  '遇到算法题先理清思路再写代码',
+  '面试回答中，思路和证据比空泛结论更重要',
+  '实践经历要突出你的真实职责、行动和结果',
+  '遇到不会的问题先说明理解，再表达学习计划',
   '面试官问"还有什么问题"时，准备2-3个有深度的问题',
-  '简历上写的每个技术点都要能展开讲',
+  '简历上写的每段经历都要能展开讲清楚',
   '注意沟通表达，逻辑清晰比语速快更重要',
-  '了解目标公司的业务和技术栈，展示你的诚意',
-  '手撕代码时先写伪代码，再逐步实现',
-  '系统设计题从需求分析开始，逐步细化',
+  '了解目标岗位的日常任务和能力要求，展示你的准备度',
+  '回答时优先讲清场景、任务、行动和结果',
+  '压力题先稳定情绪，再分步骤说明判断依据',
   '准备几个你在项目中解决的难题案例',
   '面试结束后及时复盘，记录不足之处'
 ]
@@ -567,7 +591,7 @@ async function loadKnowledgeBases() {
       }
     }
   } catch (e) {
-    console.error('加载知识库失败:', e)
+    console.error('加载岗位画像失败:', e)
     knowledgeBases.value = []
   } finally {
     knowledgeLoading.value = false
@@ -656,16 +680,21 @@ function scoreColor(score) {
   return '#ef4444'
 }
 
+function percentText(value) {
+  if (typeof value !== 'number') return '-'
+  return `${Math.round(value * 100)}%`
+}
+
 // 面试准备动画
 const startProgress = ref(0)
-const startingTitle = ref('AI 面试即将开始，请做好准备')
+const startingTitle = ref('模拟面试即将开始，请做好准备')
 const startTip = ref('')
 let startTipTimer = null
 let startProgressTimer = null
 
 const startTips = [
   '深呼吸，保持冷静自信 💪',
-  '回答时尽量结合你的项目经验',
+  '回答时尽量结合你的实习、社团或课程项目经历',
   '思路比答案更重要，先理清再作答',
   '不会的问题坦诚说不会，展示学习意愿',
   '自我介绍控制在1-2分钟',
@@ -682,8 +711,8 @@ function startStartingAnimation() {
   }, 2000)
 
   const stages = [
-    { target: 30, speed: 150, title: 'AI 面试即将开始，请做好准备' },
-    { target: 60, speed: 200, title: 'AI 正在生成面试题目...' },
+    { target: 30, speed: 150, title: '模拟面试即将开始，请做好准备' },
+    { target: 60, speed: 200, title: 'AI 正在生成岗位面试题目...' },
     { target: 85, speed: 350, title: '正在根据你的简历定制题目...' },
     { target: 95, speed: 600, title: '即将开始...' }
   ]
@@ -744,7 +773,7 @@ function buildStartErrorTips(message) {
   if (text.includes('API Key') || text.includes('API Token')) {
     return [
       '先在当前页面点一次“检测连接”，确认你选择的服务商和模型真的可用。',
-      '如果检测失败，请去个人中心更新 API Key，或切换到另一个可用模型后再试。'
+      '如果检测失败，请去个人设置更新 API Key，或切换到另一个可用模型后再试。'
     ]
   }
 
@@ -776,10 +805,10 @@ function buildStartErrorTips(message) {
     ]
   }
 
-  if (text.includes('岗位知识库')) {
+  if (text.includes('岗位画像') || text.includes('知识库')) {
     return [
-      '先改成“不使用知识库”再试一次，确认是否是知识库状态或权限问题。',
-      '如果不使用知识库可以开始面试，再回头检查这份知识库是否已停用或不可见。'
+      '先改成“不使用岗位画像”再试一次，确认是否是岗位画像状态或权限问题。',
+      '如果不使用岗位画像可以开始面试，再回头检查这份岗位画像是否已停用或不可见。'
     ]
   }
 
@@ -952,6 +981,32 @@ async function handleStart() {
   justify-content: center; color: white; font-size: 18px; font-weight: 700;
 }
 .score-text { font-size: 14px; color: #6b7280; }
+.matching-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.metric-item {
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+.metric-item strong {
+  display: block;
+  color: #111827;
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+.metric-item span {
+  color: #6b7280;
+  font-size: 12px;
+}
+.metric-item.final {
+  border-color: #0f766e;
+  background: #ecfdf5;
+}
 .analysis-summary {
   font-size: 14px; line-height: 1.8; color: #374151; margin-bottom: 16px;
   padding: 10px 14px; background: #f9fafb; border-radius: 8px;
@@ -1099,6 +1154,9 @@ async function handleStart() {
 @media (max-width: 640px) {
   .form-row {
     grid-template-columns: 1fr;
+  }
+  .matching-metrics {
+    grid-template-columns: 1fr 1fr;
   }
   .api-test-actions {
     flex-direction: column;

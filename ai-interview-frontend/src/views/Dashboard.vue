@@ -1,13 +1,27 @@
 <template>
   <div class="container">
+    <div class="workspace-hero card">
+      <div>
+        <p class="eyebrow">职启智评工作台</p>
+        <h1>多岗位 AI 模拟面试与求职能力评估</h1>
+        <p>
+          保留原有“自选岗位 -> 选择岗位画像 -> 开始面试”的主流程，同时用岗位画像、轻量匹配评分和证据追问增强技术岗与非技术岗训练效果。
+        </p>
+      </div>
+      <div class="hero-actions">
+        <router-link to="/competition-demo" class="btn-secondary hero-link">查看参赛演示</router-link>
+        <router-link to="/resume/upload" class="btn-primary hero-link primary">开始一次面试</router-link>
+      </div>
+    </div>
+
     <div class="page-header">
-      <h1>📋 面试记录</h1>
+      <h1>面试记录</h1>
       <div class="header-actions">
         <router-link to="/knowledge-base" class="btn-secondary" style="display:inline-block;padding:10px 18px;border-radius:8px">
-          岗位知识库
+          岗位画像库
         </router-link>
         <router-link to="/resume/upload" class="btn-primary" style="display:inline-block;padding:10px 24px;color:white;border-radius:8px">
-          + 开始新面试
+          + 新建面试
         </router-link>
       </div>
     </div>
@@ -17,7 +31,7 @@
     <div v-else-if="interviews.length === 0" class="empty card">
       <p style="font-size:48px;margin-bottom:12px">🎯</p>
       <p>还没有面试记录</p>
-      <p style="color:#6b7280;font-size:14px;margin-top:8px">上传简历开始你的第一次 AI 模拟面试</p>
+      <p style="color:#6b7280;font-size:14px;margin-top:8px">上传简历，选择任意目标岗位，生成你的第一次岗位面试评估报告</p>
     </div>
 
     <div v-else class="interview-list">
@@ -37,7 +51,7 @@
             继续面试
           </router-link>
           <router-link v-else :to="`/interview/${item.interview_id}/report`" class="btn-secondary" style="padding:6px 16px;font-size:13px;display:inline-block;border-radius:6px">
-            查看报告
+            查看面试报告
           </router-link>
           <button class="btn-danger" style="padding:6px 16px;font-size:13px;border-radius:6px" @click="handleDelete(item.interview_id)">
             删除
@@ -84,6 +98,43 @@ async function handleDelete(interviewId) {
 </script>
 
 <style scoped>
+.workspace-hero {
+  margin: 20px 0 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-left: 4px solid #0f766e;
+}
+.workspace-hero .eyebrow {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.workspace-hero h1 {
+  font-size: 26px;
+  color: #111827;
+  margin-bottom: 8px;
+}
+.workspace-hero p {
+  color: #4b5563;
+  line-height: 1.8;
+  max-width: 640px;
+}
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hero-link {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 8px;
+}
+.hero-link.primary {
+  color: white;
+}
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -149,5 +200,16 @@ async function handleDelete(interviewId) {
 }
 .btn-danger:hover {
   background: #dc2626;
+}
+@media (max-width: 760px) {
+  .workspace-hero,
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hero-actions,
+  .header-actions {
+    flex-direction: column;
+  }
 }
 </style>

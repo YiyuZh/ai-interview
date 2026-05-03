@@ -1,6 +1,9 @@
 from collections import Counter
+from datetime import datetime, timezone
+import io
 import json
 import logging
+import zipfile
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -19,6 +22,63 @@ from app.services.client.position_knowledge_base_slice_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+TRAINING_SAMPLE_QUALITY_TIERS = {"needs_review", "low", "medium", "high"}
+EVALUATION_DATASET_SCHEMA_VERSION = "ai-interview.evaluation-dataset.v1"
+EVALUATION_DATASET_DEFINITIONS = (
+    {
+        "dataset_type": "golden_cases",
+        "filename": "golden_cases.jsonl",
+        "label": "黄金样本集",
+        "description": "高质量、无幻觉且高分的稳定训练样本。",
+        "rules": [
+            "status=completed",
+            "training_sample_review.review_status=reviewed",
+            "training_sample_review.is_high_quality=true",
+            "training_sample_review.has_hallucination=false",
+            "overall_score>=7.5",
+        ],
+    },
+    {
+        "dataset_type": "hallucination_cases",
+        "filename": "hallucination_cases.jsonl",
+        "label": "幻觉问题集",
+        "description": "人工判定存在幻觉或无依据强答的案例。",
+        "rules": [
+            "status=completed",
+            "training_sample_review.review_status=reviewed",
+            "training_sample_review.has_hallucination=true",
+        ],
+    },
+    {
+        "dataset_type": "followup_quality_cases",
+        "filename": "followup_quality_cases.jsonl",
+        "label": "追问质量集",
+        "description": "追问值得保留，且本轮存在可复用的 evidence-driven follow-up 信号。",
+        "rules": [
+            "status=completed",
+            "training_sample_review.review_status=reviewed",
+            "training_sample_review.followup_worthy=true",
+            "training_sample_review.has_hallucination=false",
+            "overall_score>=6.0",
+            "followup_signal_present=true",
+        ],
+    },
+    {
+        "dataset_type": "report_quality_cases",
+        "filename": "report_quality_cases.jsonl",
+        "label": "报告质量集",
+        "description": "报告建议具有可执行性，且报告聚合信号完整。",
+        "rules": [
+            "status=completed",
+            "training_sample_review.review_status=reviewed",
+            "training_sample_review.report_actionable=true",
+            "training_sample_review.has_hallucination=false",
+            "overall_score>=6.0",
+            "report_signal_present=true",
+        ],
+    },
+)
 
 
 PANEL_ROLE_SPECS = [
@@ -1248,6 +1308,441 @@ class InterviewService:
         return merged
 
     @staticmethod
+    def _json_dict_from_text(value: Optional[str]) -> Dict[str, Any]:
+        if not value:
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        if isinstance(value, Decimal):
+            return float(value)
+        try:
+            json.dumps(value, ensure_ascii=False)
+            return value
+        except TypeError:
+            return str(value)
+
+    @staticmethod
+    def _normalize_training_sample_review(review: Any) -> Dict[str, Any]:
+        raw = review if isinstance(review, dict) else {}
+        quality_tier = str(raw.get("quality_tier") or "needs_review").strip().lower()
+        if quality_tier not in TRAINING_SAMPLE_QUALITY_TIERS:
+            quality_tier = "needs_review"
+
+        notes = str(raw.get("notes") or "").strip()
+        if len(notes) > 2000:
+            notes = notes[:2000]
+
+        normalized = {
+            "quality_tier": quality_tier,
+            "is_high_quality": bool(raw.get("is_high_quality")),
+            "has_hallucination": bool(raw.get("has_hallucination")),
+            "followup_worthy": bool(raw.get("followup_worthy")),
+            "report_actionable": bool(raw.get("report_actionable")),
+            "notes": notes,
+            "reviewed_at": raw.get("reviewed_at"),
+            "reviewer_email": raw.get("reviewer_email"),
+        }
+        normalized["review_status"] = "reviewed" if normalized.get("reviewed_at") else "pending"
+        normalized["export_recommended"] = bool(
+            normalized["is_high_quality"] and not normalized["has_hallucination"]
+        )
+        return normalized
+
+    @staticmethod
+    def get_training_sample_review(panel_snapshot: Any) -> Dict[str, Any]:
+        snapshot = panel_snapshot if isinstance(panel_snapshot, dict) else {}
+        return InterviewService._normalize_training_sample_review(snapshot.get("training_sample_review") or {})
+
+    @staticmethod
+    async def update_training_sample_review(
+        db: AsyncSession,
+        interview_id: int,
+        review_data: Dict[str, Any],
+        reviewer_email: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        interview = await db.get(Interview, interview_id)
+        if not interview:
+            raise NotFoundError(message="面试记录不存在")
+
+        panel_snapshot = interview.panel_snapshot if isinstance(interview.panel_snapshot, dict) else {}
+        next_review = InterviewService._normalize_training_sample_review(review_data)
+        next_review["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+        next_review["reviewer_email"] = reviewer_email or next_review.get("reviewer_email")
+        next_review["review_status"] = "reviewed"
+        next_review["export_recommended"] = bool(
+            next_review["is_high_quality"] and not next_review["has_hallucination"]
+        )
+
+        interview.panel_snapshot = {
+            **panel_snapshot,
+            "training_sample_review": next_review,
+        }
+        await db.commit()
+        await db.refresh(interview)
+        return next_review
+
+    @staticmethod
+    def build_training_sample(
+        interview: Interview,
+        messages: Optional[Sequence[InterviewMessage]] = None,
+        user_email: Optional[str] = None,
+        include_user_email: bool = False,
+    ) -> Dict[str, Any]:
+        questions = InterviewService._serialize_questions(interview.questions_data or [])
+        report = InterviewService._json_dict_from_text(interview.report)
+        panel_snapshot = interview.panel_snapshot if isinstance(interview.panel_snapshot, dict) else {}
+        knowledge_base_snapshot = (
+            interview.knowledge_base_snapshot
+            if isinstance(interview.knowledge_base_snapshot, dict)
+            else {}
+        )
+        interview_blueprint = panel_snapshot.get("interview_blueprint") or {}
+        training_sample_review = InterviewService.get_training_sample_review(panel_snapshot)
+        answer_by_index: Dict[int, InterviewMessage] = {}
+        for item in messages or []:
+            if item.role == "candidate" and item.question_index is not None:
+                answer_by_index[int(item.question_index)] = item
+
+        rounds = []
+        retrieved_slice_ids: List[int] = []
+        for index, question in enumerate(questions):
+            question_index = int(question.get("index") if question.get("index") is not None else index)
+            message = answer_by_index.get(question_index)
+            evaluation = question.get("evaluation") or {}
+            used_slice_ids = []
+            for value in question.get("used_slice_ids") or []:
+                try:
+                    slice_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                used_slice_ids.append(slice_id)
+                if slice_id not in retrieved_slice_ids:
+                    retrieved_slice_ids.append(slice_id)
+            round_score = question.get("score")
+            if round_score is None and message and message.score is not None:
+                round_score = float(message.score)
+
+            answer = question.get("answer") or (message.content if message else "")
+            feedback = question.get("feedback") or (message.feedback if message else "")
+            round_item = {
+                "question_index": question_index,
+                "question": question.get("question"),
+                "answer": answer,
+                "score": float(round_score) if round_score is not None else None,
+                "feedback": feedback or "",
+                "category": question.get("category"),
+                "stage": question.get("stage"),
+                "lead_role": question.get("lead_role"),
+                "interview_mode": question.get("interview_mode") or interview.interview_mode,
+                "question_target_gap": question.get("question_target_gap"),
+                "question_target_evidence": question.get("question_target_evidence") or [],
+                "question_target_evidence_ids": question.get("question_target_evidence_ids") or [],
+                "question_reason": question.get("question_reason"),
+                "used_slice_ids": used_slice_ids,
+                "evidence_trace": question.get("evidence_trace") or [],
+                "evidence_summary": question.get("evidence_summary") or [],
+                "blueprint_track": question.get("blueprint_track"),
+                "blueprint_requirement_status": question.get("blueprint_requirement_status"),
+                "selected_followups": question.get("selected_followups") or [],
+                "evaluation": {
+                    "strengths": evaluation.get("strengths") or [],
+                    "gaps": evaluation.get("gaps") or [],
+                    "unresolved_gaps": evaluation.get("unresolved_gaps") or [],
+                    "evidence_strength_delta": evaluation.get("evidence_strength_delta") or [],
+                    "claim_confidence_change": evaluation.get("claim_confidence_change") or [],
+                    "next_best_followup": evaluation.get("next_best_followup"),
+                    "panel_views": evaluation.get("panel_views") or [],
+                    "evaluation_mode": evaluation.get("evaluation_mode"),
+                },
+                "sample_flags": {
+                    "has_answer": bool((answer or "").strip()),
+                    "has_evidence": bool(question.get("evidence_trace") or question.get("evidence_summary")),
+                    "has_followup_loop": bool(
+                        evaluation.get("next_best_followup")
+                        or evaluation.get("evidence_strength_delta")
+                        or evaluation.get("claim_confidence_change")
+                    ),
+                    "high_score_candidate": bool(round_score is not None and float(round_score) >= 8),
+                },
+            }
+            rounds.append(round_item)
+
+        report_summary = {
+            "overall_score": float(interview.overall_score) if interview.overall_score is not None else None,
+            "common_gaps": report.get("common_gaps") or [],
+            "common_strengths": report.get("common_strengths") or [],
+            "training_priorities": report.get("training_priorities") or [],
+            "followup_loop_summary": report.get("followup_loop_summary") or [],
+            "claim_confidence_summary": report.get("claim_confidence_summary") or [],
+            "evidence_summary": report.get("evidence_summary") or [],
+        }
+        interview_meta = {
+            "id": interview.id,
+            "target_position": interview.target_position,
+            "difficulty": interview.difficulty,
+            "interview_mode": interview.interview_mode,
+            "status": interview.status,
+            "total_questions": interview.total_questions,
+            "overall_score": float(interview.overall_score) if interview.overall_score is not None else None,
+            "created_at": interview.created_at.isoformat() if interview.created_at else None,
+        }
+        if include_user_email and user_email:
+            interview_meta["user_email"] = user_email
+
+        sample = {
+            "sample_version": "ai-interview.training-sample.v1",
+            "interview": interview_meta,
+            "evidence_context": {
+                "knowledge_base_id": interview.knowledge_base_id,
+                "knowledge_base_title": knowledge_base_snapshot.get("title"),
+                "interview_blueprint": interview_blueprint,
+                "retrieved_slice_ids": retrieved_slice_ids,
+                "blueprint_evidence_summary": (interview_blueprint.get("evidence_summary") or [])[:6]
+                if isinstance(interview_blueprint, dict)
+                else [],
+            },
+            "rounds": rounds,
+            "report_summary": report_summary,
+            "training_sample_review": training_sample_review,
+            "export_notes": {
+                "pii_included": bool(include_user_email and user_email),
+                "review_status": training_sample_review.get("review_status"),
+                "export_recommended": training_sample_review.get("export_recommended"),
+                "intended_use": "offline review, hallucination analysis, follow-up quality review, and future fine-tuning preparation",
+            },
+        }
+        return json.loads(json.dumps(sample, ensure_ascii=False, default=InterviewService._json_safe))
+
+    @staticmethod
+    async def get_completed_training_samples(
+        db: AsyncSession,
+        include_user_email: bool = False,
+        min_score: Optional[float] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        query = (
+            select(Interview, User.email)
+            .join(User, Interview.user_id == User.id)
+            .where(Interview.status == "completed")
+            .order_by(Interview.created_at.desc())
+        )
+        if min_score is not None:
+            query = query.where(Interview.overall_score >= min_score)
+        if limit is not None:
+            query = query.limit(limit)
+
+        result = await db.execute(query)
+        rows = result.all()
+        interview_ids = [interview.id for interview, _ in rows]
+        messages_by_interview = {interview_id: [] for interview_id in interview_ids}
+
+        if interview_ids:
+            msg_result = await db.execute(
+                select(InterviewMessage)
+                .where(InterviewMessage.interview_id.in_(interview_ids))
+                .order_by(InterviewMessage.interview_id, InterviewMessage.id)
+            )
+            for message in msg_result.scalars().all():
+                messages_by_interview.setdefault(message.interview_id, []).append(message)
+
+        return [
+            InterviewService.build_training_sample(
+                interview=interview,
+                messages=messages_by_interview.get(interview.id, []),
+                user_email=email,
+                include_user_email=include_user_email,
+            )
+            for interview, email in rows
+        ]
+
+    @staticmethod
+    def _sample_has_followup_signal(sample: Dict[str, Any]) -> bool:
+        for round_item in sample.get("rounds") or []:
+            evaluation = round_item.get("evaluation") or {}
+            if (
+                evaluation.get("next_best_followup")
+                or evaluation.get("evidence_strength_delta")
+                or evaluation.get("claim_confidence_change")
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _sample_has_report_signal(sample: Dict[str, Any]) -> bool:
+        report = sample.get("report_summary") or {}
+        return bool(
+            report.get("common_gaps")
+            or report.get("common_strengths")
+            or report.get("training_priorities")
+        )
+
+    @staticmethod
+    def _match_evaluation_datasets(sample: Dict[str, Any]) -> Dict[str, List[str]]:
+        interview = sample.get("interview") or {}
+        review = sample.get("training_sample_review") or {}
+        overall_score = float(interview.get("overall_score") or 0)
+        base_rules = [
+            "status=completed",
+            "training_sample_review.review_status=reviewed",
+        ]
+        if interview.get("status") != "completed" or review.get("review_status") != "reviewed":
+            return {}
+
+        matched: Dict[str, List[str]] = {}
+        if review.get("is_high_quality") and not review.get("has_hallucination") and overall_score >= 7.5:
+            matched["golden_cases"] = [
+                *base_rules,
+                "training_sample_review.is_high_quality=true",
+                "training_sample_review.has_hallucination=false",
+                "overall_score>=7.5",
+            ]
+        if review.get("has_hallucination"):
+            matched["hallucination_cases"] = [
+                *base_rules,
+                "training_sample_review.has_hallucination=true",
+            ]
+        if (
+            review.get("followup_worthy")
+            and not review.get("has_hallucination")
+            and overall_score >= 6.0
+            and InterviewService._sample_has_followup_signal(sample)
+        ):
+            matched["followup_quality_cases"] = [
+                *base_rules,
+                "training_sample_review.followup_worthy=true",
+                "training_sample_review.has_hallucination=false",
+                "overall_score>=6.0",
+                "followup_signal_present=true",
+            ]
+        if (
+            review.get("report_actionable")
+            and not review.get("has_hallucination")
+            and overall_score >= 6.0
+            and InterviewService._sample_has_report_signal(sample)
+        ):
+            matched["report_quality_cases"] = [
+                *base_rules,
+                "training_sample_review.report_actionable=true",
+                "training_sample_review.has_hallucination=false",
+                "overall_score>=6.0",
+                "report_signal_present=true",
+            ]
+        return matched
+
+    @staticmethod
+    def build_evaluation_dataset_bundle(
+        samples: Sequence[Dict[str, Any]],
+        include_user_email: bool = False,
+    ) -> Dict[str, Any]:
+        exported_at = datetime.now(timezone.utc).isoformat()
+        dataset_entries: Dict[str, List[Dict[str, Any]]] = {
+            item["dataset_type"]: [] for item in EVALUATION_DATASET_DEFINITIONS
+        }
+        example_ids: Dict[str, List[int]] = {
+            item["dataset_type"]: [] for item in EVALUATION_DATASET_DEFINITIONS
+        }
+        reviewed_samples = 0
+
+        for sample in samples:
+            review = sample.get("training_sample_review") or {}
+            if review.get("review_status") == "reviewed":
+                reviewed_samples += 1
+
+            membership = InterviewService._match_evaluation_datasets(sample)
+            interview_id = int((sample.get("interview") or {}).get("id") or 0)
+            for dataset_type, matched_rules in membership.items():
+                dataset_sample = json.loads(json.dumps(sample, ensure_ascii=False))
+                dataset_sample["dataset_membership"] = {
+                    "dataset_type": dataset_type,
+                    "matched_rules": matched_rules,
+                }
+                dataset_entries[dataset_type].append(dataset_sample)
+                if interview_id and interview_id not in example_ids[dataset_type] and len(example_ids[dataset_type]) < 5:
+                    example_ids[dataset_type].append(interview_id)
+
+        preview_datasets = []
+        manifest_datasets = []
+        files: Dict[str, str] = {}
+        for definition in EVALUATION_DATASET_DEFINITIONS:
+            dataset_type = definition["dataset_type"]
+            filename = definition["filename"]
+            items = dataset_entries[dataset_type]
+            files[filename] = "\n".join(
+                json.dumps(item, ensure_ascii=False) for item in items
+            )
+            dataset_preview = {
+                "dataset_type": dataset_type,
+                "filename": filename,
+                "label": definition["label"],
+                "description": definition["description"],
+                "count": len(items),
+                "example_interview_ids": example_ids[dataset_type],
+                "rules": definition["rules"],
+            }
+            preview_datasets.append(dataset_preview)
+            manifest_datasets.append(dataset_preview)
+
+        filters = {
+            "base_requirements": [
+                "status=completed",
+                "training_sample_review.review_status=reviewed",
+            ],
+            "thresholds": {
+                "golden_cases_min_score": 7.5,
+                "followup_quality_cases_min_score": 6.0,
+                "report_quality_cases_min_score": 6.0,
+            },
+            "overlap_allowed": True,
+            "pii_included": include_user_email,
+        }
+
+        preview = {
+            "schema_version": EVALUATION_DATASET_SCHEMA_VERSION,
+            "generated_at": exported_at,
+            "filters": filters,
+            "stats": {
+                "completed_samples": len(samples),
+                "reviewed_samples": reviewed_samples,
+                "dataset_assignments": sum(len(items) for items in dataset_entries.values()),
+            },
+            "datasets": preview_datasets,
+        }
+        manifest = {
+            "schema_version": EVALUATION_DATASET_SCHEMA_VERSION,
+            "exported_at": exported_at,
+            "filters": filters,
+            "datasets": manifest_datasets,
+            "counts": {
+                definition["filename"]: len(dataset_entries[definition["dataset_type"]])
+                for definition in EVALUATION_DATASET_DEFINITIONS
+            },
+            "pii_included": include_user_email,
+        }
+        return {
+            "preview": preview,
+            "manifest": manifest,
+            "files": files,
+        }
+
+    @staticmethod
+    def build_evaluation_dataset_zip(bundle: Dict[str, Any]) -> bytes:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(bundle.get("manifest") or {}, ensure_ascii=False, indent=2),
+            )
+            for filename, content in (bundle.get("files") or {}).items():
+                archive.writestr(filename, content or "")
+        return buffer.getvalue()
+
+    @staticmethod
     def _chunk_text(text: str, chunk_size: int = 28) -> List[str]:
         content = text or ""
         if not content:
@@ -1686,6 +2181,9 @@ class InterviewService:
                 report_signals=report_signals,
                 interview_mode=interview.interview_mode,
             )
+            resume_analysis = InterviewService._load_resume_analysis_payload(resume) if resume else {}
+            if resume_analysis.get("matching_metrics") and not report.get("matching_metrics"):
+                report["matching_metrics"] = resume_analysis["matching_metrics"]
             report["question_scores"] = InterviewService._build_question_scores(questions)
             report["mode_label"] = (
                 "内部多面试官协同 + 单主持人输出"

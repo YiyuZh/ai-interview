@@ -50,7 +50,7 @@ def create_app():
     app = FastAPI(
         lifespan=lifespan,
         title=settings.PROJECT_NAME,
-        description="FastAPI Template - 统一入口",
+        description="职启智评：多岗位 AI 模拟面试与求职能力评估系统 API",
         version="1.0.0",
         docs_url=None,
         redoc_url=None,
@@ -70,7 +70,7 @@ def create_app():
         @app.get("/", tags=["docs"])
         async def swagger_navigation():
             return {
-                "message": "FastAPI Template - 开发环境",
+                "message": "职启智评 API - 开发环境",
                 "environment": settings.ENV,
                 "documentation": {
                     "client_api": {

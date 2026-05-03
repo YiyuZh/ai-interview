@@ -1,7 +1,7 @@
 <template>
   <div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-      <h1 style="font-size:20px">🎤 面试记录</h1>
+      <h1 style="font-size:20px">面试记录</h1>
       <select v-model="statusFilter" @change="page = 1; loadInterviews()" style="width:140px">
         <option value="">全部状态</option>
         <option value="in_progress">进行中</option>
@@ -20,6 +20,7 @@
             <th>题数</th>
             <th>得分</th>
             <th>状态</th>
+            <th>人工标注</th>
             <th>时间</th>
             <th>操作</th>
           </tr>
@@ -38,6 +39,11 @@
               <span v-else style="color:#9ca3af">-</span>
             </td>
             <td><span :class="['badge', i.status === 'completed' ? 'badge-green' : 'badge-yellow']">{{ i.status === 'completed' ? '已完成' : '进行中' }}</span></td>
+            <td>
+              <span :class="['badge', i.training_sample_review?.review_status === 'reviewed' ? 'badge-green' : 'badge-yellow']">
+                {{ i.training_sample_review?.review_status === 'reviewed' ? '已标注' : '待标注' }}
+              </span>
+            </td>
             <td>{{ formatDate(i.created_at) }}</td>
             <td>
               <router-link :to="`/interviews/${i.id}`" class="btn-primary btn-sm" style="color:white;display:inline-block">详情</router-link>

@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     ENV: str = "development"
 
     # Base application settings
-    PROJECT_NAME: str = "FastAPI Template"
+    PROJECT_NAME: str = "职启智评 API"
     API_V1_STR: str = "/api/v1"
     API_PORT: int = 8001
     FRONTEND_URL: str = "http://localhost:3000"

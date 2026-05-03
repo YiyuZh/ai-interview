@@ -1,8 +1,8 @@
 <template>
   <div class="auth-page">
     <div class="auth-card">
-      <h2>🎯 智面</h2>
-      <p class="subtitle">AI 模拟面试平台</p>
+      <h2>职启智评</h2>
+      <p class="subtitle">多岗位 AI 模拟面试与求职能力评估系统</p>
       <form @submit.prevent="handleLogin">
         <div class="form-group">
           <label>邮箱</label>

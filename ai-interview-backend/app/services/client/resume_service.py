@@ -14,6 +14,7 @@ from app.exceptions.http_exceptions import NotFoundError, ValidationError
 from app.models.resume import Resume
 from app.models.user import User
 from app.services.client.ai_service import AIService
+from app.services.client.matching_engine import matching_engine
 from app.services.common.deepseek_config_service import deepseek_config_service
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,12 @@ class ResumeService:
                 resume_evidence=resume_evidence,
                 ai_config=ai_config,
             )
+            analysis = ResumeService._attach_matching_metrics(
+                analysis,
+                parsed_resume=parsed,
+                target_position=resume.target_position or "",
+                resume_evidence=resume_evidence,
+            )
             resume.analysis = json.dumps(
                 ResumeService._build_analysis_payload(analysis, resume_evidence),
                 ensure_ascii=False,
@@ -212,6 +219,28 @@ class ResumeService:
                 resume,
                 "简历分析服务异常，请稍后重试",
             )
+
+    @staticmethod
+    def _attach_matching_metrics(
+        analysis: Optional[Dict],
+        parsed_resume: Dict,
+        target_position: str,
+        resume_evidence: Optional[Dict] = None,
+    ) -> Dict:
+        payload = dict(analysis or {})
+        metrics = matching_engine.evaluate(
+            parsed_resume=parsed_resume,
+            target_position=target_position,
+            llm_analysis=payload,
+            resume_evidence=resume_evidence,
+        )
+        payload["matching_metrics"] = metrics
+        payload["keyword_coverage"] = metrics["keyword_coverage"]
+        payload["semantic_score"] = metrics["semantic_score"]
+        payload["rule_score"] = metrics["rule_score"]
+        payload["final_score"] = metrics["final_score"]
+        payload["evidence_basis"] = metrics["evidence_basis"]
+        return payload
 
     @staticmethod
     async def _build_runtime_config(db: AsyncSession, resume: Resume) -> Dict:

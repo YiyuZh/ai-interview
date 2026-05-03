@@ -9,7 +9,7 @@
           <span class="score-label">/10</span>
         </div>
         <div class="score-info">
-          <h2>面试评估报告</h2>
+          <h2>岗位面试评估报告</h2>
           <p v-if="report.hire_recommendation" class="hire-rec">{{ report.hire_recommendation }}</p>
         </div>
       </div>
@@ -20,11 +20,21 @@
       </div>
 
       <div v-if="data.interview_mode === 'panel'" class="card panel-note-card section-card">
-        <h3>多面试官协同模式</h3>
+        <h3>多角色协同评估模式</h3>
         <p class="panel-note-text">
-          本场面试启用了“内部多角色协同 + 单主持人对外输出”模式。你看到的提问与反馈，来自多个训练视角的综合判断。
+          本场测评启用了“内部多角色协同 + 单主持人对外输出”模式。你看到的提问与反馈，来自岗位画像、简历证据和表达逻辑等多个视角的综合判断。
         </p>
         <p v-if="report.mode_label" class="panel-mode-label">{{ report.mode_label }}</p>
+      </div>
+
+      <div v-if="report.matching_metrics" class="card section-card">
+        <h3>岗位匹配指标</h3>
+        <div class="metric-row">
+          <span>关键词覆盖：{{ percentText(report.matching_metrics.keyword_coverage?.score) }}</span>
+          <span>语义分：{{ report.matching_metrics.semantic_score ?? '-' }}</span>
+          <span>规则分：{{ report.matching_metrics.rule_score ?? '-' }}</span>
+          <span>最终分：{{ report.matching_metrics.final_score ?? '-' }}</span>
+        </div>
       </div>
 
       <div v-if="report.panel_summary?.length" class="card section-card">
@@ -35,7 +45,7 @@
       </div>
 
       <div v-if="report.training_priorities?.length" class="card section-card">
-        <h3>后续训练建议</h3>
+        <h3>后续求职训练建议</h3>
         <ul class="panel-list">
           <li v-for="(item, i) in report.training_priorities" :key="i">{{ formatInsightItem(item) }}</li>
         </ul>
@@ -70,7 +80,7 @@
       </div>
 
       <div v-if="report.evidence_summary?.length" class="card section-card">
-        <h3>训练依据</h3>
+        <h3>评估依据</h3>
         <ul class="panel-list">
           <li v-for="(item, i) in report.evidence_summary" :key="`evidence-${i}`">{{ formatInsightItem(item) }}</li>
         </ul>
@@ -130,21 +140,21 @@
           class="btn-primary"
           style="display:inline-block;padding:10px 24px;color:white;border-radius:8px;margin-right:12px"
         >
-          再来一次
+          再测一次
         </router-link>
         <router-link
           to="/dashboard"
           class="btn-secondary"
           style="display:inline-block;padding:10px 24px;border-radius:8px"
         >
-          返回首页
+          返回工作台
         </router-link>
       </div>
     </div>
 
     <div v-else class="card empty-card">
       <p>报告加载失败</p>
-      <router-link to="/dashboard" class="empty-link">返回首页</router-link>
+      <router-link to="/dashboard" class="empty-link">返回工作台</router-link>
     </div>
   </div>
 </template>
@@ -168,6 +178,11 @@ function formatInsightItem(item) {
     return item.summary || item.title || item.focus || item.priority || JSON.stringify(item)
   }
   return String(item)
+}
+
+function percentText(value) {
+  if (typeof value !== 'number') return '-'
+  return `${Math.round(value * 100)}%`
 }
 
 onMounted(async () => {
@@ -236,6 +251,20 @@ onMounted(async () => {
   font-size: 14px;
   color: #6b7280;
   margin-top: 4px;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-row span {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f9fafb;
+  color: #374151;
+  font-size: 13px;
 }
 
 .section-text {
@@ -371,6 +400,10 @@ onMounted(async () => {
 
   .two-col {
     grid-template-columns: 1fr;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .q-score-header {

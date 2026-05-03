@@ -1,7 +1,7 @@
 <template>
   <div class="login-page">
     <div class="login-card">
-      <h2>🎯 智面后台</h2>
+      <h2>职启智评后台</h2>
       <form @submit.prevent="handleLogin">
         <div class="form-group">
           <label>邮箱</label>

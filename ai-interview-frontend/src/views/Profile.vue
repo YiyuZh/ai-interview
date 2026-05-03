@@ -1,7 +1,7 @@
 <template>
   <div class="container">
     <div class="profile-page">
-      <h2 class="page-title">个人中心</h2>
+      <h2 class="page-title">个人设置</h2>
 
       <div class="card avatar-section">
         <div class="avatar-wrapper" @click="$refs.avatarInput.click()">
@@ -20,7 +20,7 @@
             @click="handleTestAiConnection"
             :disabled="saving || testingAiConnection"
           >
-            {{ testingAiConnection ? '娴嬭瘯涓?..' : `娴嬭瘯褰撳墠 ${activeProviderLabel} 杩炴帴` }}
+            {{ testingAiConnection ? '测试中...' : `测试当前 ${activeProviderLabel} 连接` }}
           </button>
           <p v-if="testAiMessage" :class="testAiSuccess ? 'success-msg' : 'error'">
             {{ testAiMessage }}
@@ -60,7 +60,7 @@
         </div>
         <div class="form-group">
           <label>求职目标</label>
-          <input v-model="form.career_goal" placeholder="例如：Python 后端开发工程师" />
+          <input v-model="form.career_goal" placeholder="例如：Python后端开发工程师 / 测试工程师 / 产品助理 / 人力资源专员" />
         </div>
         <div class="form-group">
           <label>所在城市</label>
@@ -74,7 +74,7 @@
             <h3 class="section-title">AI 调用设置</h3>
             <p class="section-desc">
               你可以在这里选择使用 DeepSeek 或 ChatGPT / OpenAI，并分别保存自己的 API Key。
-              当前被选中的服务商将用于简历解析、面试问答和报告生成；如遇 Token 无效、额度不足或连接失败，页面会直接提示原因。
+              当前被选中的服务商将用于简历解析、岗位画像匹配、模拟面试和报告生成；如遇 Token 无效、额度不足或连接失败，页面会直接提示原因。
             </p>
           </div>
           <div class="provider-status-list">
@@ -422,7 +422,7 @@ async function handleTestAiConnection() {
   try {
     const result = await testAiConnection(activeProvider.value)
     testAiSuccess.value = true
-    testAiMessage.value = result?.message || `${activeProviderLabel.value} 杩炴帴娴嬭瘯鎴愬姛`
+    testAiMessage.value = result?.message || `${activeProviderLabel.value} 连接测试成功`
   } catch (error) {
     testAiMessage.value = error.message
   } finally {

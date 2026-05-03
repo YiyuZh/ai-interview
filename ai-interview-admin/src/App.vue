@@ -1,8 +1,8 @@
 <template>
   <div class="admin-layout" v-if="authStore.isLoggedIn">
     <aside class="sidebar">
-      <div class="sidebar-logo"><span class="logo-icon">🎯</span><span class="logo-text">智面</span></div>
-      <div class="sidebar-subtitle">后台管理</div>
+      <div class="sidebar-logo"><span class="logo-text">职启智评</span></div>
+      <div class="sidebar-subtitle">参赛后台管理</div>
       <nav class="sidebar-nav">
         <router-link to="/" exact-active-class="active">
           <span class="nav-icon">📊</span> 数据概览
@@ -11,7 +11,10 @@
           <span class="nav-icon">👥</span> 用户管理
         </router-link>
         <router-link to="/knowledge-bases" active-class="active">
-          <span class="nav-icon">🧠</span> 公共知识库
+          <span class="nav-icon">🧠</span> 公共岗位画像
+        </router-link>
+        <router-link to="/evaluation-datasets" active-class="active">
+          <span class="nav-icon">🧪</span> 评测样本
         </router-link>
         <router-link to="/interviews" active-class="active">
           <span class="nav-icon">🎤</span> 面试记录
@@ -24,9 +27,21 @@
     </aside>
     <main class="main-content">
       <router-view />
+      <footer class="icp-footer" aria-label="ICP备案信息">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer noopener">
+          粤ICP备2026047626号
+        </a>
+      </footer>
     </main>
   </div>
-  <router-view v-else />
+  <div v-else class="public-shell">
+    <router-view />
+    <footer class="icp-footer" aria-label="ICP备案信息">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer noopener">
+        粤ICP备2026047626号
+      </a>
+    </footer>
+  </div>
 </template>
 
 <script setup>
@@ -163,5 +178,26 @@ function logout() { authStore.logout(); router.push('/login') }
   flex: 1;
   padding: 28px;
   background: #f8fafc;
+}
+
+.public-shell {
+  min-height: 100vh;
+  background: #f8fafc;
+}
+
+.icp-footer {
+  padding: 18px 20px 28px;
+  text-align: center;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.icp-footer a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.icp-footer a:hover {
+  color: #4f46e5;
 }
 </style>

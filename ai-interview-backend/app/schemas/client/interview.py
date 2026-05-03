@@ -2,12 +2,14 @@ from typing import Any, Dict, Literal, Optional
 
 from pydantic import Field
 
+from app.constants.competition import DEFAULT_TARGET_POSITION
+
 from ..base import BaseSchema
 
 
 class InterviewStart(BaseSchema):
     resume_id: int
-    target_position: str = "Python后端开发工程师"
+    target_position: str = DEFAULT_TARGET_POSITION
     knowledge_base_id: Optional[int] = None
     ai_provider: Optional[str] = None
     ai_model: Optional[str] = None

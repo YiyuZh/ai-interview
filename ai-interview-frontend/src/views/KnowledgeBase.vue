@@ -2,11 +2,11 @@
   <div class="container">
     <div class="page-header">
       <div>
-        <h1>岗位知识库</h1>
-        <p class="page-subtitle">把你为目标岗位整理的知识点、重点场景和训练要求交给 AI 面试官，面试会更贴近真实岗位。</p>
+        <h1>岗位画像库</h1>
+        <p class="page-subtitle">把任意目标岗位的核心能力、常见八股、典型任务、关键词和评分重点交给 AI 面试官，让技术岗与非技术岗训练都更贴近真实面试。</p>
       </div>
       <button class="btn-primary" @click="startCreate">
-        {{ editingId ? '新建一份' : '+ 新建知识库' }}
+        {{ editingId ? '新建一份' : '+ 新建岗位画像' }}
       </button>
     </div>
 
@@ -14,27 +14,27 @@
       <h3>推荐填写方式</h3>
       <div class="intro-grid">
         <div>
-          <strong>知识内容</strong>
-          <p>写岗位核心概念、常见八股、常考原理、典型技术栈、重要场景。</p>
+          <strong>岗位画像内容</strong>
+          <p>写岗位核心能力、典型任务、关键词、常见工作场景和入门岗位要求；技术岗可加入八股知识点。</p>
         </div>
         <div>
-          <strong>重点训练方向</strong>
-          <p>写你最想被重点追问的内容，比如 Redis、消息队列、系统设计、项目深挖。</p>
+          <strong>重点测评方向</strong>
+          <p>写你最想被重点核实的内容，比如项目深度、数据库、Redis、系统设计，或招聘流程、运营复盘、沟通协作。</p>
         </div>
         <div>
           <strong>额外面试官要求</strong>
-          <p>写你希望面试官采用的风格，比如“多追问原理”“严格一点”“多问项目落地”。</p>
+          <p>写你希望面试官采用的风格，比如“多追问真实经历”“严格核验证据”“多给可执行建议”。</p>
         </div>
       </div>
     </div>
 
     <div class="content-grid">
       <div class="card form-card">
-        <h3>{{ editingId ? '编辑知识库' : '新建知识库' }}</h3>
+        <h3>{{ editingId ? '编辑岗位画像' : '新建岗位画像' }}</h3>
 
         <div class="form-group">
-          <label>知识库标题</label>
-          <input v-model="form.title" placeholder="例如：Python 后端核心题库" />
+          <label>画像标题</label>
+          <input v-model="form.title" placeholder="例如：Python后端开发工程师岗位画像" />
         </div>
 
         <div class="form-group">
@@ -43,20 +43,20 @@
         </div>
 
         <div class="form-group">
-          <label>知识内容</label>
+          <label>岗位画像内容</label>
           <textarea
             v-model="form.knowledge_content"
             rows="10"
-            placeholder="把该岗位的重要知识点、原理、常见场景、项目实践要点写在这里"
+            placeholder="写该岗位的核心能力、典型任务、关键词、常见工作场景和能力要求"
           />
         </div>
 
         <div class="form-group">
-          <label>重点训练方向</label>
+          <label>重点测评方向</label>
           <textarea
             v-model="form.focus_points"
             rows="5"
-            placeholder="例如：重点追问 Redis 持久化、缓存一致性、消息队列削峰填谷、项目中的性能优化"
+            placeholder="例如：技术岗追问语言基础、数据库、Redis、HTTP、并发、系统设计；职能岗追问流程、数据、沟通和复盘"
           />
         </div>
 
@@ -65,20 +65,20 @@
           <textarea
             v-model="form.interviewer_prompt"
             rows="4"
-            placeholder="例如：不要只问八股，要结合项目经历追问；回答模糊时要继续深挖"
+            placeholder="例如：回答模糊时继续追问证据；优先给出可执行的简历和面试改进建议"
           />
         </div>
 
         <label class="switch-row">
           <input v-model="form.is_active" type="checkbox" />
-          <span>启用这份知识库</span>
+          <span>启用这份岗位画像</span>
         </label>
 
         <p v-if="formMsg" :class="formMsg.startsWith('✅') ? 'success-msg' : 'error'">{{ formMsg }}</p>
 
         <div class="form-actions">
           <button class="btn-primary" @click="handleSubmit" :disabled="saving">
-            {{ saving ? '保存中...' : (editingId ? '保存修改' : '创建知识库') }}
+            {{ saving ? '保存中...' : (editingId ? '保存修改' : '创建岗位画像') }}
           </button>
           <button v-if="editingId" class="btn-secondary" @click="resetForm">取消编辑</button>
         </div>
@@ -86,15 +86,15 @@
 
       <div class="list-panel">
         <div class="list-header">
-          <h3>可用知识库</h3>
-          <input v-model="keyword" placeholder="按岗位关键词筛选" />
+          <h3>可用岗位画像</h3>
+          <input v-model="keyword" placeholder="按岗位 / 能力关键词筛选" />
         </div>
 
         <div v-if="loading" class="card empty-card">加载中...</div>
 
         <div v-else-if="filteredItems.length === 0" class="card empty-card">
-          <p>还没有岗位知识库。</p>
-          <p class="muted">建议至少先整理一份目标岗位的核心知识点，这样 AI 面试官会更会问。</p>
+          <p>还没有岗位画像。</p>
+          <p class="muted">建议至少先整理一份目标岗位画像，这样 AI 面试官会更会问、更会评。</p>
         </div>
 
         <div v-else class="knowledge-list">
@@ -178,7 +178,7 @@
                 <button class="btn-secondary action-btn" @click="handleEdit(item)">编辑</button>
                 <button class="btn-danger action-btn" @click="handleDelete(item)">删除</button>
               </div>
-              <span v-else class="public-tip">公共知识库由后台维护</span>
+              <span v-else class="public-tip">公共岗位画像由后台维护</span>
             </div>
           </div>
         </div>
@@ -357,7 +357,7 @@ function handleEdit(item) {
 async function handleSubmit() {
   formMsg.value = ''
   if (!form.value.title.trim() || !form.value.target_position.trim() || !form.value.knowledge_content.trim()) {
-    formMsg.value = '标题、目标岗位和知识内容不能为空'
+    formMsg.value = '标题、目标岗位和画像内容不能为空'
     return
   }
 
@@ -375,12 +375,12 @@ async function handleSubmit() {
     if (editingId.value) {
       await updateKnowledgeBase(editingId.value, payload)
       await loadItems()
-      formMsg.value = '✅ 知识库已更新'
+      formMsg.value = '✅ 岗位画像已更新'
     } else {
       await createKnowledgeBase(payload)
       await loadItems()
       resetForm()
-      formMsg.value = '✅ 知识库已创建'
+      formMsg.value = '✅ 岗位画像已创建'
     }
   } catch (e) {
     formMsg.value = e.message

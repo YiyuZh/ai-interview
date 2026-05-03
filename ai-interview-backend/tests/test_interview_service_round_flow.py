@@ -1,3 +1,10 @@
+import io
+import json
+import zipfile
+from datetime import datetime
+from decimal import Decimal
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.client.ai_service import AIService
@@ -304,3 +311,245 @@ async def test_evaluate_round_falls_back_to_single_when_panel_evaluation_fails(m
     assert mode == "single_fallback"
     assert evaluation["feedback"] == "Need more concrete ownership evidence."
     assert evaluation["next_best_followup"]["target_gap"] == "ownership clarity"
+
+
+@pytest.mark.unit
+def test_build_training_sample_export_keeps_evidence_loop_and_hides_pii_by_default():
+    interview = SimpleNamespace(
+        id=99,
+        user_id=1,
+        resume_id=2,
+        knowledge_base_id=7,
+        target_position="Python Backend Engineer",
+        difficulty="medium",
+        total_questions=1,
+        status="completed",
+        current_question_index=1,
+        interview_mode="panel",
+        overall_score=Decimal("8.2"),
+        created_at=datetime(2026, 4, 18, 12, 0, 0),
+        knowledge_base_snapshot={"title": "Python Backend KB"},
+        panel_snapshot={
+            "interview_blueprint": {
+                "training_focus": ["Verify ownership"],
+                "evidence_summary": ["Blueprint evidence"],
+            },
+            "training_sample_review": {
+                "quality_tier": "high",
+                "is_high_quality": True,
+                "has_hallucination": False,
+                "followup_worthy": True,
+                "report_actionable": True,
+                "notes": "Good ownership evidence and useful follow-up loop.",
+                "reviewed_at": "2026-04-18T12:30:00+00:00",
+                "reviewer_email": "reviewer@example.com",
+            },
+        },
+        questions_data=[
+            {
+                "index": 0,
+                "question": "Tell me about the cache rollout.",
+                "category": "project",
+                "stage": "project_followup",
+                "lead_role": "project_follow_up",
+                "interview_mode": "panel",
+                "question_target_gap": "ownership clarity",
+                "question_target_evidence": ["Cache rollout evidence"],
+                "question_target_evidence_ids": [31],
+                "question_reason": "Verify whether the candidate owned the rollout.",
+                "used_slice_ids": [11],
+                "evidence_trace": [{"slice_id": 11, "reason_summary": "Matched cache rollout"}],
+                "evidence_summary": ["Slice #11 matched cache rollout"],
+                "blueprint_track": "Project ownership verification",
+                "blueprint_requirement_status": "weak",
+                "selected_followups": ["Which rollout decision was yours?"],
+                "evaluation": {
+                    "strengths": ["clear architecture"],
+                    "gaps": ["ownership clarity"],
+                    "unresolved_gaps": ["ownership clarity"],
+                    "evidence_strength_delta": [
+                        {
+                            "evidence": "Cache rollout evidence",
+                            "delta": "strengthened",
+                            "reason": "Answer added rollout details.",
+                        }
+                    ],
+                    "claim_confidence_change": [
+                        {
+                            "claim": "Led cache rollout",
+                            "change": "increased",
+                            "reason": "Answer named direct decisions.",
+                        }
+                    ],
+                    "next_best_followup": {
+                        "question": "Which rollout decision was yours?",
+                        "target_gap": "ownership clarity",
+                        "evidence_source_ids": [31],
+                    },
+                    "panel_views": [{"role": "project_follow_up", "summary": "Need ownership proof."}],
+                    "evaluation_mode": "panel",
+                },
+            }
+        ],
+        report='{"common_gaps":["ownership clarity"],"common_strengths":["clear architecture"],'
+        '"training_priorities":["verify ownership"],"followup_loop_summary":["Ask ownership"],'
+        '"claim_confidence_summary":["claim confidence increased"],"evidence_summary":["slice #11"]}',
+    )
+    messages = [
+        SimpleNamespace(
+            role="candidate",
+            question_index=0,
+            content="I owned the rollout plan and monitored cache hit rate.",
+            score=Decimal("8.0"),
+            feedback="Good concrete detail.",
+        )
+    ]
+
+    sample = InterviewService.build_training_sample(
+        interview=interview,
+        messages=messages,
+        user_email="candidate@example.com",
+    )
+
+    assert sample["sample_version"] == "ai-interview.training-sample.v1"
+    assert "user_email" not in sample["interview"]
+    assert sample["evidence_context"]["retrieved_slice_ids"] == [11]
+    assert sample["training_sample_review"]["quality_tier"] == "high"
+    assert sample["training_sample_review"]["export_recommended"] is True
+    assert sample["rounds"][0]["answer"] == "I owned the rollout plan and monitored cache hit rate."
+    assert sample["rounds"][0]["question_target_gap"] == "ownership clarity"
+    assert sample["rounds"][0]["evaluation"]["next_best_followup"]["target_gap"] == "ownership clarity"
+    assert sample["rounds"][0]["sample_flags"]["has_followup_loop"] is True
+    assert sample["report_summary"]["common_gaps"] == ["ownership clarity"]
+
+    sample_with_pii = InterviewService.build_training_sample(
+        interview=interview,
+        messages=messages,
+        user_email="candidate@example.com",
+        include_user_email=True,
+    )
+    assert sample_with_pii["interview"]["user_email"] == "candidate@example.com"
+
+
+@pytest.mark.unit
+def test_build_evaluation_dataset_bundle_classifies_samples_and_allows_overlap():
+    def make_sample(
+        interview_id,
+        *,
+        score,
+        is_high_quality=False,
+        has_hallucination=False,
+        followup_worthy=False,
+        report_actionable=False,
+        reviewed=True,
+        followup_signal=False,
+        report_signal=False,
+    ):
+        return {
+            "interview": {
+                "id": interview_id,
+                "status": "completed",
+                "overall_score": score,
+                "target_position": "Python Backend Engineer",
+            },
+            "rounds": [
+                {
+                    "evaluation": {
+                        "next_best_followup": {"question": "next"} if followup_signal else None,
+                        "evidence_strength_delta": [{"delta": "strengthened"}] if followup_signal else [],
+                        "claim_confidence_change": [{"change": "increased"}] if followup_signal else [],
+                    }
+                }
+            ],
+            "report_summary": {
+                "common_gaps": ["ownership clarity"] if report_signal else [],
+                "common_strengths": ["system design"] if report_signal else [],
+                "training_priorities": ["ownership"] if report_signal else [],
+            },
+            "training_sample_review": {
+                "review_status": "reviewed" if reviewed else "pending",
+                "quality_tier": "high" if is_high_quality else "medium",
+                "is_high_quality": is_high_quality,
+                "has_hallucination": has_hallucination,
+                "followup_worthy": followup_worthy,
+                "report_actionable": report_actionable,
+            },
+        }
+
+    samples = [
+        make_sample(
+            101,
+            score=8.3,
+            is_high_quality=True,
+            followup_worthy=True,
+            report_actionable=True,
+            followup_signal=True,
+            report_signal=True,
+        ),
+        make_sample(
+            102,
+            score=5.1,
+            has_hallucination=True,
+        ),
+        make_sample(
+            103,
+            score=7.0,
+            is_high_quality=True,
+            reviewed=False,
+            followup_worthy=True,
+            report_actionable=True,
+            followup_signal=True,
+            report_signal=True,
+        ),
+    ]
+
+    bundle = InterviewService.build_evaluation_dataset_bundle(samples)
+    preview = bundle["preview"]
+    datasets = {item["dataset_type"]: item for item in preview["datasets"]}
+    manifest = bundle["manifest"]
+
+    assert preview["stats"]["completed_samples"] == 3
+    assert preview["stats"]["reviewed_samples"] == 2
+    assert datasets["golden_cases"]["count"] == 1
+    assert datasets["golden_cases"]["example_interview_ids"] == [101]
+    assert datasets["hallucination_cases"]["count"] == 1
+    assert datasets["hallucination_cases"]["example_interview_ids"] == [102]
+    assert datasets["followup_quality_cases"]["count"] == 1
+    assert datasets["report_quality_cases"]["count"] == 1
+    assert manifest["counts"]["golden_cases.jsonl"] == 1
+    assert manifest["counts"]["hallucination_cases.jsonl"] == 1
+    assert manifest["counts"]["followup_quality_cases.jsonl"] == 1
+    assert manifest["counts"]["report_quality_cases.jsonl"] == 1
+
+    golden_lines = [line for line in bundle["files"]["golden_cases.jsonl"].splitlines() if line.strip()]
+    followup_lines = [line for line in bundle["files"]["followup_quality_cases.jsonl"].splitlines() if line.strip()]
+    report_lines = [line for line in bundle["files"]["report_quality_cases.jsonl"].splitlines() if line.strip()]
+    hallucination_lines = [line for line in bundle["files"]["hallucination_cases.jsonl"].splitlines() if line.strip()]
+
+    assert len(golden_lines) == 1
+    assert json.loads(golden_lines[0])["dataset_membership"]["dataset_type"] == "golden_cases"
+    assert len(followup_lines) == 1
+    assert json.loads(followup_lines[0])["dataset_membership"]["dataset_type"] == "followup_quality_cases"
+    assert len(report_lines) == 1
+    assert json.loads(report_lines[0])["dataset_membership"]["dataset_type"] == "report_quality_cases"
+    assert len(hallucination_lines) == 1
+    assert json.loads(hallucination_lines[0])["dataset_membership"]["dataset_type"] == "hallucination_cases"
+
+
+@pytest.mark.unit
+def test_build_evaluation_dataset_zip_includes_manifest_and_empty_files():
+    bundle = InterviewService.build_evaluation_dataset_bundle([])
+    zip_bytes = InterviewService.build_evaluation_dataset_zip(bundle)
+
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+        names = set(archive.namelist())
+        assert "manifest.json" in names
+        assert "golden_cases.jsonl" in names
+        assert "hallucination_cases.jsonl" in names
+        assert "followup_quality_cases.jsonl" in names
+        assert "report_quality_cases.jsonl" in names
+
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["schema_version"] == "ai-interview.evaluation-dataset.v1"
+        assert manifest["counts"]["golden_cases.jsonl"] == 0
+        assert archive.read("golden_cases.jsonl").decode("utf-8") == ""

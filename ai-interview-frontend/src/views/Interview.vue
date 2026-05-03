@@ -14,12 +14,12 @@
             <path d="M30 52 Q40 60 50 52" stroke="#1e1e1e" stroke-width="2" fill="none" stroke-linecap="round" />
           </svg>
         </div>
-        <h2 class="prepare-title">面试即将开始</h2>
+        <h2 class="prepare-title">模拟面试即将开始</h2>
         <p class="prepare-tip">{{ prepareTip }}</p>
         <div class="prepare-progress">
           <div class="prepare-bar" :style="{ width: `${preparePercent}%` }"></div>
         </div>
-        <p class="prepare-subtitle">AI 正在为你准备面试题目...</p>
+        <p class="prepare-subtitle">AI 正在结合简历证据和岗位画像准备题目...</p>
       </div>
     </div>
 
@@ -30,7 +30,7 @@
           <ellipse cx="11" cy="14" rx="2.5" ry="3" fill="#1e1e1e" />
           <ellipse cx="21" cy="14" rx="2.5" ry="3" fill="#1e1e1e" />
         </svg>
-        <span>AI 面试官</span>
+        <span>职启智评面试官</span>
       </div>
       <span class="progress">第 {{ currentIndex + 1 }} / {{ totalQuestions }} 题</span>
       <router-link
@@ -67,9 +67,9 @@
     <div v-if="!preparing && isPanelMode" class="panel-status-card">
       <div class="panel-status-top">
         <div>
-          <strong>当前模式：多面试官协同</strong>
+          <strong>当前模式：多角色协同评估</strong>
           <p class="panel-status-note">
-            对外仍然是单主持人提问；内部会综合多个训练视角做选题、追问和评估。
+            对外仍然是单主持人提问；内部会综合岗位画像、简历证据、表达逻辑和改进潜力做选题、追问和评估。
           </p>
         </div>
         <span class="panel-status-chip">内部协同中</span>
@@ -277,15 +277,15 @@ const chatArea = ref(null)
 const streamingText = ref('')
 const latestRoundSummary = ref(null)
 const interviewMeta = ref(null)
-const panelRoleHints = ['技术深挖', '项目追问', '业务场景', '表达结构', '压力质询']
+const panelRoleHints = ['岗位匹配', '经历追问', '沟通表达', '证据核查', '改进建议']
 
 const preparing = ref(true)
 const preparePercent = ref(0)
 const prepareTips = [
   '请做好准备，保持冷静和自信',
-  '回答时尽量结合你的项目经验',
+  '回答时尽量结合你的实习、社团或课程项目经历',
   '注意条理清晰，分点作答',
-  '面试官会根据你的简历继续追问'
+  '面试官会根据你的简历证据继续追问'
 ]
 const prepareTip = ref(prepareTips[0])
 
@@ -313,7 +313,7 @@ const hasBlueprintCard = computed(() => {
   return trainingFocus.value.length || highRiskClaims.value.length || blueprintEvidenceSummary.value.length
 })
 const interviewModeLabel = computed(() => {
-  return interviewMode.value === 'panel' ? '多面试官协同' : '单面试官模式'
+  return interviewMode.value === 'panel' ? '多角色协同评估' : '单面试官模式'
 })
 
 function loadInterviewMeta() {

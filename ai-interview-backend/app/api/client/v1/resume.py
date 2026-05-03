@@ -9,6 +9,7 @@ from app.core.celery_app import celery_app
 from app.db.session import get_db
 from app.exceptions.http_exceptions import ValidationError
 from app.models.user import User
+from app.constants.competition import DEFAULT_TARGET_POSITION
 from app.schemas.response import ApiResponse
 from app.services.client.resume_service import resume_service
 from app.services.common.deepseek_config_service import deepseek_config_service
@@ -46,7 +47,7 @@ def _build_resume_runtime_config(
 async def upload_resume(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    target_position: str = Form(default="Python后端开发工程师"),
+    target_position: str = Form(default=DEFAULT_TARGET_POSITION),
     ai_provider: Optional[str] = Form(default=None),
     ai_model: Optional[str] = Form(default=None),
     current_user: User = Depends(get_current_user),

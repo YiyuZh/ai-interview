@@ -56,7 +56,7 @@ async def api_docs_info():
     API文档导出功能说明
     """
     return {
-        "message": "FastAPI Template - API文档导出功能",
+        "message": "职启智评 API 文档导出功能",
         "description": "提供OpenAPI JSON格式的API文档，可导入到各种API管理工具",
         "downloads": {
             "client": {
